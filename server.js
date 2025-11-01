@@ -12,7 +12,8 @@ const {
     sanitizeData,
     sanitizeInput,
     preventParameterPollution,
-    corsOptions
+    corsOptions,
+    getAllowedOrigins
 } = require('./middleware/securityMiddleware');
 
 // Rate limiting
@@ -103,8 +104,11 @@ app.get('/health', (req, res) => {
 
 // Serve static files from uploads directory with CORS
 app.use('/uploads', (req, res, next) => {
-    // Set CORS headers for all upload requests
-    res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:5173');
+    // Set CORS headers for all upload requests based on request origin
+    const origin = req.headers.origin;
+    const allowedOrigins = getAllowedOrigins();
+    const allowOrigin = allowedOrigins.includes(origin) ? origin : (process.env.FRONTEND_URL || allowedOrigins[0] || 'http://localhost:5173');
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
@@ -147,7 +151,7 @@ const server = app.listen(process.env.PORT, () =>
 const { Server } = require('socket.io');
 const io = new Server(server, {
     cors: {
-        origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+        origin: getAllowedOrigins(),
         methods: ['GET', 'POST'],
         credentials: true
     }

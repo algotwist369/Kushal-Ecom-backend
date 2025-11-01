@@ -86,7 +86,6 @@ const couponSchema = new mongoose.Schema({
 });
 
 // Index for faster queries
-couponSchema.index({ code: 1 });
 couponSchema.index({ isActive: 1, validUntil: 1 });
 couponSchema.index({ 'claimedBy.phoneNumber': 1 });
 

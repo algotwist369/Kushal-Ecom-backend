@@ -31,18 +31,30 @@ const sanitizeInput = xss();
 // Prevent parameter pollution
 const preventParameterPollution = hpp();
 
+// Centralized allowed origins helper
+const getAllowedOrigins = () => {
+    const envList = process.env.ALLOWED_ORIGINS?.split(',').map(s => s.trim()).filter(Boolean) || [];
+    // Defaults include provided production URLs and localhost for dev
+    const defaults = [
+        'https://ui.rootedremedies.in',
+        'http://ui.rootedremedies.in',
+        'http://localhost:5173'
+    ];
+    // Merge uniquely, preserve env precedence
+    const set = new Set([...envList, ...defaults]);
+    return Array.from(set);
+};
+
 // CORS configuration
 const corsOptions = {
     origin: function (origin, callback) {
-        // Allow requests with no origin (mobile apps, etc.)
+        // Allow requests with no origin (mobile apps, curl, server-to-server)
         if (!origin) return callback(null, true);
-        
-        const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173'];
-        if (allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
+        const allowedOrigins = getAllowedOrigins();
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
         }
+        return callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
     optionsSuccessStatus: 200
@@ -53,5 +65,6 @@ module.exports = {
     sanitizeData,
     sanitizeInput,
     preventParameterPollution,
-    corsOptions
+    corsOptions,
+    getAllowedOrigins
 };
