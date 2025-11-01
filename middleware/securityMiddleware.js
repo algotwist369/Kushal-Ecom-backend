@@ -57,7 +57,9 @@ const corsOptions = {
         return callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
-    optionsSuccessStatus: 200
+    optionsSuccessStatus: 200,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 };
 
 module.exports = {
