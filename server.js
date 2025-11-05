@@ -9,8 +9,6 @@ const connectDB = require('./config/db.js');
 // Security middleware
 const {
     securityHeaders,
-    sanitizeData,
-    sanitizeInput,
     preventParameterPollution,
     corsOptions,
     getAllowedOrigins
@@ -66,8 +64,6 @@ app.use(preventParameterPollution);
 
 // CORS
 app.use(cors(corsOptions));
-// Explicitly enable preflight across the board
-app.options('*', cors(corsOptions));
 
 // Morgan HTTP request logger
 if (process.env.NODE_ENV === 'development') {

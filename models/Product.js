@@ -39,7 +39,6 @@ const productSchema = new mongoose.Schema({
     },
     slug: {
         type: String,
-        required: true,
         unique: true,
         lowercase: true
     },
@@ -235,20 +234,26 @@ productSchema.methods.getRatingStats = function () {
     return stats;
 };
 
-// Generate slug before saving
+// Generate slug before saving - handles both new documents and name changes
 productSchema.pre('save', async function (next) {
-    if (this.isModified('name') && !this.slug) {
-        this.slug = await generateUniqueSlug(this.constructor, this.name, this._id);
-    }
-    next();
-});
+    try {
+        // Ensure name exists and is not empty
+        if (!this.name || !this.name.trim()) {
+            return next(new Error('Product name is required'));
+        }
 
-// Update slug if name changes
-productSchema.pre('save', async function (next) {
-    if (this.isModified('name') && this.slug) {
-        this.slug = await generateUniqueSlug(this.constructor, this.name, this._id);
+        const trimmedName = this.name.trim();
+
+        // Always generate slug if it doesn't exist (for new products)
+        // Or regenerate if name changes (slug is always auto-generated from name)
+        if (!this.slug || this.isModified('name')) {
+            this.slug = await generateUniqueSlug(this.constructor, trimmedName, this._id);
+        }
+        
+        next();
+    } catch (error) {
+        next(error);
     }
-    next();
 });
 
 module.exports = mongoose.model('Product', productSchema);

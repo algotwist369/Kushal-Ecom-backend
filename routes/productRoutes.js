@@ -13,6 +13,7 @@ const {
     getNewArrivals,
 } = require('../controllers/productController.js');
 const { protect, admin } = require('../middleware/authMiddleware.js');
+const { validateProduct, validateProductUpdate, validateObjectId } = require('../middleware/validationMiddleware.js');
 
 const router = express.Router();
 
@@ -25,9 +26,9 @@ router.post('/filter', getAllProductsByFilter);
 
 // Admin
 router.get('/admin/all', protect, admin, getAllProductsAdmin);
-router.post('/', protect, admin, createProduct);
-router.put('/:id', protect, admin, updateProduct);
-router.delete('/:id', protect, admin, deleteProduct);
+router.post('/', protect, admin, validateProduct, createProduct);
+router.put('/:id', protect, admin, validateObjectId, validateProductUpdate, updateProduct);
+router.delete('/:id', protect, admin, validateObjectId, deleteProduct);
 
 // Reviews (User)
 router.post('/:id/review', protect, addOrUpdateReview);

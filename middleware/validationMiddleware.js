@@ -46,7 +46,7 @@ const validateUserLogin = [
     handleValidationErrors
 ];
 
-// Product validation
+// Product validation (for create)
 const validateProduct = [
     body('name')
         .trim()
@@ -66,6 +66,41 @@ const validateProduct = [
     body('category')
         .isMongoId()
         .withMessage('Please provide a valid category ID'),
+    handleValidationErrors
+];
+
+// Product update validation (partial - all fields optional)
+const validateProductUpdate = [
+    body('name')
+        .optional()
+        .trim()
+        .isLength({ min: 2, max: 100 })
+        .withMessage('Product name must be between 2 and 100 characters'),
+    body('description')
+        .optional()
+        .trim()
+        .isLength({ max: 1000 })
+        .withMessage('Description must not exceed 1000 characters'),
+    body('price')
+        .optional()
+        .isFloat({ min: 0 })
+        .withMessage('Price must be a positive number'),
+    body('stock')
+        .optional()
+        .isInt({ min: 0 })
+        .withMessage('Stock must be a non-negative integer'),
+    body('category')
+        .optional()
+        .isMongoId()
+        .withMessage('Please provide a valid category ID'),
+    body('discountPrice')
+        .optional()
+        .isFloat({ min: 0 })
+        .withMessage('Discount price must be a positive number'),
+    body('isActive')
+        .optional()
+        .isBoolean()
+        .withMessage('isActive must be a boolean'),
     handleValidationErrors
 ];
 
@@ -136,6 +171,7 @@ module.exports = {
     validateUserRegistration,
     validateUserLogin,
     validateProduct,
+    validateProductUpdate,
     validateCategory,
     validateOrder,
     validateObjectId,

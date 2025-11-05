@@ -134,6 +134,9 @@ const getAllProductsByFilter = handleAsync(async (req, res) => {
 });
 
 const createProduct = handleAsync(async (req, res) => {
+    // Extract all fields except slug (slug is auto-generated from name)
+    const { slug, ...productData } = req.body;
+    
     const { 
         name, description, price, discountPrice, stock, category, images, attributes, isActive,
         // Ayurvedic-specific fields
@@ -145,7 +148,7 @@ const createProduct = handleAsync(async (req, res) => {
         packOptions, freeProducts, bundleWith, offerText, isOnOffer,
         // Shipping Options
         freeShipping, shippingCost, minOrderForFreeShipping
-    } = req.body;
+    } = productData;
 
     const product = new Product({
         name,
@@ -419,90 +422,89 @@ const getProductById = handleAsync(async (req, res) => {
 const updateProduct = handleAsync(async (req, res) => {
     const product = await Product.findById(req.params.id);
 
-    if (product) {
-        const { 
-            name, description, price, discountPrice, stock, category, images, attributes, isActive,
-            // Ayurvedic-specific fields
-            ingredients, benefits, dosage, contraindications, shelfLife, storageInstructions,
-            manufacturer, batchNumber, expiryDate, certification, origin, processingMethod,
-            potency, formulation, ageGroup, gender, season, timeOfDay, faq, howToUse,
-            howToStore, howToConsume, metaTitle, metaDescription, keywords,
-            // Pack & Combo Options
-            packOptions, freeProducts, bundleWith, offerText, isOnOffer,
-            // Shipping Options
-            freeShipping, shippingCost, minOrderForFreeShipping
-        } = req.body;
-
-        // Basic fields - Use !== undefined to allow falsy values like 0, false, empty string
-        if (name !== undefined) product.name = name;
-        if (description !== undefined) product.description = description;
-        if (price !== undefined) product.price = price;
-        if (discountPrice !== undefined) product.discountPrice = discountPrice;
-        if (stock !== undefined) product.stock = stock;
-        if (category !== undefined) product.category = category;
-        if (images !== undefined) product.images = images;
-        if (attributes !== undefined) product.attributes = attributes;
-        if (isActive !== undefined) product.isActive = isActive;
-
-        // Ayurvedic-specific fields
-        if (ingredients !== undefined) product.ingredients = ingredients;
-        if (benefits !== undefined) product.benefits = benefits;
-        if (dosage !== undefined) product.dosage = dosage;
-        if (contraindications !== undefined) product.contraindications = contraindications;
-        if (shelfLife !== undefined) product.shelfLife = shelfLife;
-        if (storageInstructions !== undefined) product.storageInstructions = storageInstructions;
-        if (manufacturer !== undefined) product.manufacturer = manufacturer;
-        if (batchNumber !== undefined) product.batchNumber = batchNumber;
-        if (expiryDate !== undefined) product.expiryDate = expiryDate;
-        if (certification !== undefined) product.certification = certification;
-        if (origin !== undefined) product.origin = origin;
-        if (processingMethod !== undefined) product.processingMethod = processingMethod;
-        if (potency !== undefined) product.potency = potency;
-        if (formulation !== undefined) product.formulation = formulation;
-        if (ageGroup !== undefined) product.ageGroup = ageGroup;
-        if (gender !== undefined) product.gender = gender;
-        if (season !== undefined) product.season = season;
-        if (timeOfDay !== undefined) product.timeOfDay = timeOfDay;
-        if (faq !== undefined) product.faq = faq;
-        if (howToUse !== undefined) product.howToUse = howToUse;
-        if (howToStore !== undefined) product.howToStore = howToStore;
-        if (howToConsume !== undefined) product.howToConsume = howToConsume;
-        if (metaTitle !== undefined) product.metaTitle = metaTitle;
-        if (metaDescription !== undefined) product.metaDescription = metaDescription;
-        if (keywords !== undefined) product.keywords = keywords;
-
-        // Pack & Combo Options
-        if (packOptions !== undefined) product.packOptions = packOptions;
-        if (freeProducts !== undefined) product.freeProducts = freeProducts;
-        if (bundleWith !== undefined) product.bundleWith = bundleWith;
-        if (offerText !== undefined) product.offerText = offerText;
-        if (isOnOffer !== undefined) product.isOnOffer = isOnOffer;
-
-        // Shipping Options
-        if (freeShipping !== undefined) product.freeShipping = freeShipping;
-        if (shippingCost !== undefined) product.shippingCost = shippingCost;
-        if (minOrderForFreeShipping !== undefined) product.minOrderForFreeShipping = minOrderForFreeShipping;
-
-        const updatedProduct = await product.save();
-        res.json(updatedProduct);
-    } else {
-        res.status(404).json({ message: 'Product not found' });
+    if (!product) {
+        return res.status(404).json({ message: 'Product not found' });
     }
+
+    // Extract all fields except slug (slug is auto-generated from name)
+    const { slug, ...updateData } = req.body;
+    
+    const { 
+        name, description, price, discountPrice, stock, category, images, attributes, isActive,
+        // Ayurvedic-specific fields
+        ingredients, benefits, dosage, contraindications, shelfLife, storageInstructions,
+        manufacturer, batchNumber, expiryDate, certification, origin, processingMethod,
+        potency, formulation, ageGroup, gender, season, timeOfDay, faq, howToUse,
+        howToStore, howToConsume, metaTitle, metaDescription, keywords,
+        // Pack & Combo Options
+        packOptions, freeProducts, bundleWith, offerText, isOnOffer,
+        // Shipping Options
+        freeShipping, shippingCost, minOrderForFreeShipping
+    } = updateData;
+
+    // Basic fields - Use !== undefined to allow falsy values like 0, false, empty string
+    if (name !== undefined) product.name = name;
+    if (description !== undefined) product.description = description;
+    if (price !== undefined) product.price = price;
+    if (discountPrice !== undefined) product.discountPrice = discountPrice;
+    if (stock !== undefined) product.stock = stock;
+    if (category !== undefined) product.category = category;
+    if (images !== undefined) product.images = images;
+    if (attributes !== undefined) product.attributes = attributes;
+    if (isActive !== undefined) product.isActive = isActive;
+
+    // Ayurvedic-specific fields
+    if (ingredients !== undefined) product.ingredients = ingredients;
+    if (benefits !== undefined) product.benefits = benefits;
+    if (dosage !== undefined) product.dosage = dosage;
+    if (contraindications !== undefined) product.contraindications = contraindications;
+    if (shelfLife !== undefined) product.shelfLife = shelfLife;
+    if (storageInstructions !== undefined) product.storageInstructions = storageInstructions;
+    if (manufacturer !== undefined) product.manufacturer = manufacturer;
+    if (batchNumber !== undefined) product.batchNumber = batchNumber;
+    if (expiryDate !== undefined) product.expiryDate = expiryDate;
+    if (certification !== undefined) product.certification = certification;
+    if (origin !== undefined) product.origin = origin;
+    if (processingMethod !== undefined) product.processingMethod = processingMethod;
+    if (potency !== undefined) product.potency = potency;
+    if (formulation !== undefined) product.formulation = formulation;
+    if (ageGroup !== undefined) product.ageGroup = ageGroup;
+    if (gender !== undefined) product.gender = gender;
+    if (season !== undefined) product.season = season;
+    if (timeOfDay !== undefined) product.timeOfDay = timeOfDay;
+    if (faq !== undefined) product.faq = faq;
+    if (howToUse !== undefined) product.howToUse = howToUse;
+    if (howToStore !== undefined) product.howToStore = howToStore;
+    if (howToConsume !== undefined) product.howToConsume = howToConsume;
+    if (metaTitle !== undefined) product.metaTitle = metaTitle;
+    if (metaDescription !== undefined) product.metaDescription = metaDescription;
+    if (keywords !== undefined) product.keywords = keywords;
+
+    // Pack & Combo Options
+    if (packOptions !== undefined) product.packOptions = packOptions;
+    if (freeProducts !== undefined) product.freeProducts = freeProducts;
+    if (bundleWith !== undefined) product.bundleWith = bundleWith;
+    if (offerText !== undefined) product.offerText = offerText;
+    if (isOnOffer !== undefined) product.isOnOffer = isOnOffer;
+
+    // Shipping Options
+    if (freeShipping !== undefined) product.freeShipping = freeShipping;
+    if (shippingCost !== undefined) product.shippingCost = shippingCost;
+    if (minOrderForFreeShipping !== undefined) product.minOrderForFreeShipping = minOrderForFreeShipping;
+
+    const updatedProduct = await product.save();
+    res.json(updatedProduct);
 });
 
 const deleteProduct = handleAsync(async (req, res) => {
-    if (!validateObjectId(req.params.id)) {
-        return res.status(400).json({ message: 'Invalid product ID' });
-    }
-
     const product = await Product.findById(req.params.id);
 
-    if (product) {
-        await Product.findByIdAndDelete(req.params.id);
-        res.json({ message: 'Product removed' });
-    } else {
-        res.status(404).json({ message: 'Product not found' });
+    if (!product) {
+        return res.status(404).json({ message: 'Product not found' });
     }
+
+    await Product.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Product removed successfully' });
 });
 
 const addOrUpdateReview = handleAsync(async (req, res) => {
