@@ -1,6 +1,9 @@
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const { handleAsync } = require('../utils/handleAsync');
+const { getCartProductPopulateConfig } = require('../utils/productPopulate');
+
+const populateCartProducts = (cartDoc) => cartDoc.populate(getCartProductPopulateConfig());
 
 // Add / Update Cart Item
 const addUpdateToCart = handleAsync(async (req, res) => {
@@ -79,68 +82,70 @@ const addUpdateToCart = handleAsync(async (req, res) => {
     await cart.save();
     
     // Populate product details for response including all pack-related fields
-    await cart.populate({
-        path: 'items.product',
-        select: 'name price discountPrice images stock slug category packOptions freeShipping shippingCost minOrderForFreeShipping freeProducts bundleWith offerText',
-        populate: [
-            {
-                path: 'freeProducts.product',
-                select: 'name images'
-            },
-            {
-                path: 'bundleWith.product',
-                select: 'name images'
-            }
-        ]
-    });
+    await populateCartProducts(cart);
     res.json(cart);
 });
 
 // Get Cart
 const getCart = handleAsync(async (req, res) => {
-    const cart = await Cart.findOne({ user: req.user._id }).populate({
-        path: 'items.product',
-        select: 'name price discountPrice images stock slug category packOptions freeShipping shippingCost minOrderForFreeShipping freeProducts bundleWith offerText',
-        populate: [
-            {
-                path: 'freeProducts.product',
-                select: 'name images'
-            },
-            {
-                path: 'bundleWith.product',
-                select: 'name images'
-            }
-        ]
-    });
+    const cart = await Cart.findOne({ user: req.user._id });
+    if (cart) {
+        await populateCartProducts(cart);
+    }
     res.json(cart || { items: [] });
 });
 
 // Remove Item
+const parseIsPack = (value) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'pack'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'single'].includes(normalized)) return false;
+    }
+    return undefined;
+};
+
 const removeFromCart = handleAsync(async (req, res) => {
     const { productId } = req.params;
+    const { packSize, isPack } = { ...req.query, ...req.body };
+
     const cart = await Cart.findOne({ user: req.user._id });
     if (!cart) return res.status(404).json({ message: 'Cart not found' });
 
-    cart.items = cart.items.filter(item => item.product.toString() !== productId);
+    const normalizedPackSize = packSize !== undefined ? Number(packSize) : undefined;
+    if (packSize !== undefined && Number.isNaN(normalizedPackSize)) {
+        return res.status(400).json({ message: 'Invalid pack size' });
+    }
+    const parsedIsPack = parseIsPack(isPack);
+    const wantsPack = parsedIsPack === true || normalizedPackSize !== undefined;
+
+    const initialLength = cart.items.length;
+    cart.items = cart.items.filter(item => {
+        const matchesProduct = item.product.toString() === productId;
+        if (!matchesProduct) return true;
+
+        if (wantsPack) {
+            if (!item.isPack) return true;
+            if (Number.isFinite(normalizedPackSize)) {
+                return item.packInfo?.packSize !== normalizedPackSize;
+            }
+            return false;
+        }
+
+        return item.isPack;
+    });
+
+    if (cart.items.length === initialLength) {
+        return res.status(404).json({ message: 'Item not found in cart' });
+    }
     
     // Recalculate total price
     cart.totalPrice = cart.items.reduce((total, item) => total + (item.price * item.quantity), 0);
     
     await cart.save();
-    await cart.populate({
-        path: 'items.product',
-        select: 'name price discountPrice images stock slug category packOptions freeShipping shippingCost minOrderForFreeShipping freeProducts bundleWith offerText',
-        populate: [
-            {
-                path: 'freeProducts.product',
-                select: 'name images'
-            },
-            {
-                path: 'bundleWith.product',
-                select: 'name images'
-            }
-        ]
-    });
+    await populateCartProducts(cart);
     res.json(cart);
 });
 
@@ -152,7 +157,7 @@ const clearCart = handleAsync(async (userId) => {
 // Update cart item quantity
 const updateCartItemQuantity = handleAsync(async (req, res) => {
     const { productId } = req.params;
-    const { quantity } = req.body;
+    const { quantity, packSize, isPack } = req.body;
     
     if (quantity < 1) {
         return res.status(400).json({ message: 'Quantity must be at least 1' });
@@ -161,7 +166,31 @@ const updateCartItemQuantity = handleAsync(async (req, res) => {
     const cart = await Cart.findOne({ user: req.user._id });
     if (!cart) return res.status(404).json({ message: 'Cart not found' });
 
-    const itemIndex = cart.items.findIndex(item => item.product.toString() === productId);
+    const normalizedPackSize = packSize !== undefined ? Number(packSize) : undefined;
+    if (packSize !== undefined && Number.isNaN(normalizedPackSize)) {
+        return res.status(400).json({ message: 'Invalid pack size' });
+    }
+    const parsedIsPack = parseIsPack(isPack);
+    const wantsPack = parsedIsPack === true || normalizedPackSize !== undefined;
+
+    let itemIndex = cart.items.findIndex(item => {
+        if (item.product.toString() !== productId) return false;
+
+        if (wantsPack) {
+            if (!item.isPack) return false;
+            if (Number.isFinite(normalizedPackSize)) {
+                return item.packInfo?.packSize === normalizedPackSize;
+            }
+            return true;
+        }
+
+        return !item.isPack;
+    });
+
+    if (itemIndex === -1) {
+        itemIndex = cart.items.findIndex(item => item.product.toString() === productId);
+    }
+
     if (itemIndex === -1) {
         return res.status(404).json({ message: 'Item not found in cart' });
     }
@@ -178,20 +207,7 @@ const updateCartItemQuantity = handleAsync(async (req, res) => {
     cart.totalPrice = cart.items.reduce((total, item) => total + (item.price * item.quantity), 0);
     
     await cart.save();
-    await cart.populate({
-        path: 'items.product',
-        select: 'name price discountPrice images stock slug category packOptions freeShipping shippingCost minOrderForFreeShipping freeProducts bundleWith offerText',
-        populate: [
-            {
-                path: 'freeProducts.product',
-                select: 'name images'
-            },
-            {
-                path: 'bundleWith.product',
-                select: 'name images'
-            }
-        ]
-    });
+    await populateCartProducts(cart);
     res.json(cart);
 });
 

@@ -1,183 +1,153 @@
 const fs = require('fs');
 const path = require('path');
 
-// Create directory if it doesn't exist
-const ensureDirectoryExists = (dirPath) => {
-    if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
-        console.log(`Created directory: ${dirPath}`);
-    }
-};
+const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.tiff']);
 
-// Get file size in human readable format
-const getFileSize = (filePath) => {
+const uploadDirectories = [
+    'uploads',
+    path.join('uploads', 'products'),
+    path.join('uploads', 'products', 'gallery'),
+    path.join('uploads', 'products', 'thumbnails'),
+    path.join('uploads', 'products', 'pack-options'),
+    path.join('uploads', 'categories'),
+    path.join('uploads', 'categories', 'icons'),
+    path.join('uploads', 'users'),
+    path.join('uploads', 'users', 'avatars'),
+    path.join('uploads', 'users', 'documents'),
+    path.join('uploads', 'general'),
+    path.join('uploads', 'invoices'),
+    path.join('uploads', 'exports'),
+    path.join('uploads', 'temp'),
+    path.join('uploads', 'backups')
+];
+
+const getBaseUploadsPath = () => path.join(__dirname, '..');
+
+const ensureDirectory = (directoryPath) => {
     try {
-        const stats = fs.statSync(filePath);
-        const bytes = stats.size;
-        
-        if (bytes === 0) return '0 Bytes';
-        
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        if (!fs.existsSync(directoryPath)) {
+            fs.mkdirSync(directoryPath, { recursive: true });
+            console.log(`📁 Created directory: ${directoryPath}`);
+        }
+        return true;
     } catch (error) {
-        return 'Unknown';
+        console.error(`❌ Failed to create directory ${directoryPath}:`, error.message);
+        return false;
     }
 };
 
-// Get file extension
-const getFileExtension = (filename) => {
-    return path.extname(filename).toLowerCase();
+const createUploadDirectories = () => {
+    const basePath = getBaseUploadsPath();
+    uploadDirectories.forEach((relativePath) => {
+        const fullPath = path.join(basePath, relativePath);
+        ensureDirectory(fullPath);
+    });
 };
 
-// Check if file is an image
-const isImageFile = (filename) => {
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
-    const ext = getFileExtension(filename);
-    return imageExtensions.includes(ext);
-};
-
-// Generate unique filename
-const generateUniqueFilename = (originalName) => {
-    const ext = path.extname(originalName);
-    const name = path.basename(originalName, ext).replace(/\s+/g, '-');
-    const timestamp = Date.now();
-    const random = Math.round(Math.random() * 1E9);
-    return `${name}-${timestamp}-${random}${ext}`;
-};
-
-// Clean filename (remove special characters)
-const cleanFilename = (filename) => {
-    return filename
-        .replace(/[^a-zA-Z0-9.-]/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '');
-};
-
-// Get all files in directory
-const getFilesInDirectory = (dirPath) => {
+const getFilesInDirectory = (directoryPath) => {
     try {
-        return fs.readdirSync(dirPath).filter(file => {
-            const fullPath = path.join(dirPath, file);
-            return fs.statSync(fullPath).isFile();
+        if (!fs.existsSync(directoryPath)) {
+            return [];
+        }
+
+        return fs.readdirSync(directoryPath).filter((file) => {
+            const filePath = path.join(directoryPath, file);
+            return fs.statSync(filePath).isFile();
         });
     } catch (error) {
-        console.error('Error reading directory:', error);
+        console.error(`❌ Failed to read directory ${directoryPath}:`, error.message);
         return [];
     }
 };
 
-// Delete old files (older than specified days)
-const deleteOldFiles = (dirPath, daysOld = 30) => {
+const getFileSize = (filePath) => {
     try {
-        const files = fs.readdirSync(dirPath);
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-        
-        let deletedCount = 0;
-        
-        files.forEach(file => {
-            const filePath = path.join(dirPath, file);
-            const stats = fs.statSync(filePath);
-            
-            if (stats.isFile() && stats.mtime < cutoffDate) {
-                fs.unlinkSync(filePath);
-                deletedCount++;
-                console.log(`Deleted old file: ${file}`);
-            }
-        });
-        
-        return deletedCount;
-    } catch (error) {
-        console.error('Error deleting old files:', error);
+        const stats = fs.statSync(filePath);
+        return stats.isFile() ? stats.size : 0;
+    } catch {
         return 0;
     }
 };
 
-// Get directory size
-const getDirectorySize = (dirPath) => {
-    let totalSize = 0;
-    
+const getDirectorySize = (directoryPath) => {
     try {
-        const files = fs.readdirSync(dirPath);
-        
-        files.forEach(file => {
-            const filePath = path.join(dirPath, file);
-            const stats = fs.statSync(filePath);
-            
-            if (stats.isFile()) {
-                totalSize += stats.size;
-            } else if (stats.isDirectory()) {
-                totalSize += getDirectorySize(filePath);
+        if (!fs.existsSync(directoryPath)) {
+            return 0;
+        }
+
+        return fs.readdirSync(directoryPath).reduce((total, entry) => {
+            const entryPath = path.join(directoryPath, entry);
+            try {
+                const stats = fs.statSync(entryPath);
+                if (stats.isDirectory()) {
+                    return total + getDirectorySize(entryPath);
+                }
+                if (stats.isFile()) {
+                    return total + stats.size;
+                }
+            } catch {
+                // Ignore entries that can't be accessed
             }
-        });
+            return total;
+        }, 0);
     } catch (error) {
-        console.error('Error calculating directory size:', error);
+        console.error(`❌ Failed to calculate directory size for ${directoryPath}:`, error.message);
+        return 0;
     }
-    
-    return totalSize;
 };
 
-// Create upload directories structure
-const createUploadDirectories = () => {
-    const baseDir = path.join(__dirname, '../uploads');
-    const currentDate = new Date();
-    const year = currentDate.getFullYear();
-    const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-    const day = String(currentDate.getDate()).padStart(2, '0');
-    const dateFolder = `${year}-${month}-${day}`;
-    
-    const directories = [
-        'products',
-        'categories', 
-        'users',
-        'general',
-        'temp',
-        'invoices',
-        'exports',
-        'backups'
-    ];
-    
-    // Create main directories
-    directories.forEach(dir => {
-        ensureDirectoryExists(path.join(baseDir, dir));
-    });
-    
-    // Create date-based subdirectories for better organization
-    const dateBasedDirs = ['products', 'categories', 'users', 'general'];
-    dateBasedDirs.forEach(dir => {
-        ensureDirectoryExists(path.join(baseDir, dir, dateFolder));
-    });
-    
-    // Create additional organized folders
-    const additionalFolders = [
-        'products/thumbnails',
-        'products/gallery',
-        'categories/icons',
-        'users/avatars',
-        'users/documents',
-        'general/temp',
-        'general/archived'
-    ];
-    
-    additionalFolders.forEach(folder => {
-        ensureDirectoryExists(path.join(baseDir, folder));
-    });
-    
-    console.log('Upload directories created successfully with organized structure');
+const deleteOldFiles = (directoryPath, days = 30) => {
+    if (!Number.isFinite(days) || days <= 0) {
+        return 0;
+    }
+
+    try {
+        if (!fs.existsSync(directoryPath)) {
+            return 0;
+        }
+
+        const cutoffTime = Date.now() - days * 24 * 60 * 60 * 1000;
+        let deletedCount = 0;
+
+        fs.readdirSync(directoryPath).forEach((entry) => {
+            const entryPath = path.join(directoryPath, entry);
+            try {
+                const stats = fs.statSync(entryPath);
+
+                if (stats.isDirectory()) {
+                    deletedCount += deleteOldFiles(entryPath, days);
+                    const remainingEntries = fs.readdirSync(entryPath);
+                    if (remainingEntries.length === 0) {
+                        fs.rmdirSync(entryPath);
+                    }
+                } else if (stats.isFile() && stats.mtimeMs < cutoffTime) {
+                    fs.unlinkSync(entryPath);
+                    deletedCount += 1;
+                }
+            } catch (error) {
+                console.error(`❌ Failed to process ${entryPath}:`, error.message);
+            }
+        });
+
+        return deletedCount;
+    } catch (error) {
+        console.error(`❌ Failed to delete old files in ${directoryPath}:`, error.message);
+        return 0;
+    }
+};
+
+const isImageFile = (fileName = '') => {
+    const extension = path.extname(fileName).toLowerCase();
+    return imageExtensions.has(extension);
 };
 
 module.exports = {
-    ensureDirectoryExists,
-    getFileSize,
-    getFileExtension,
-    isImageFile,
-    generateUniqueFilename,
-    cleanFilename,
+    createUploadDirectories,
+    ensureDirectory,
     getFilesInDirectory,
-    deleteOldFiles,
+    getFileSize,
     getDirectorySize,
-    createUploadDirectories
+    deleteOldFiles,
+    isImageFile
 };
+

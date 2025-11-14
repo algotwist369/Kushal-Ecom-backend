@@ -1,5 +1,4 @@
 const express = require('express');
-const router = express.Router();
 const {
     searchProductsController,
     getSearchSuggestionsController,
@@ -7,20 +6,14 @@ const {
     getTrendingProductsController,
     getRelatedProductsController
 } = require('../controllers/searchController');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
-// Search products
-router.get('/products', searchProductsController);
+const router = express.Router();
 
-// Get search suggestions
-router.get('/suggestions', getSearchSuggestionsController);
-
-// Get filter options
-router.get('/filters', getFilterOptionsController);
-
-// Get trending products
-router.get('/trending', getTrendingProductsController);
-
-// Get related products
-router.get('/related/:productId', getRelatedProductsController);
+router.get('/', cacheMiddleware(120), searchProductsController);
+router.get('/suggestions', cacheMiddleware(300), getSearchSuggestionsController);
+router.get('/filters', cacheMiddleware(600), getFilterOptionsController);
+router.get('/trending', cacheMiddleware(300), getTrendingProductsController);
+router.get('/related/:productId', cacheMiddleware(300), getRelatedProductsController);
 
 module.exports = router;

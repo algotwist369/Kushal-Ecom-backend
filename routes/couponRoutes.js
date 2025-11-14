@@ -8,21 +8,21 @@ const {
     claimCoupon,
     getActiveCoupons,
     validateCoupon
-} = require('../controllers/couponController.js');
-const { protect, admin } = require('../middleware/authMiddleware.js');
+} = require('../controllers/couponController');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// Public routes
+// Public coupon endpoints
 router.get('/active', getActiveCoupons);
 router.post('/claim', claimCoupon);
 router.post('/validate', protect, validateCoupon);
 
-// Admin routes
-router.get('/', protect, admin, getAllCoupons);
-router.post('/', protect, admin, createCoupon);
-router.get('/:id', protect, admin, getCouponById);
-router.put('/:id', protect, admin, updateCoupon);
-router.delete('/:id', protect, admin, deleteCoupon);
+// Admin coupon management
+router.get('/', protect, authorize('admin'), getAllCoupons);
+router.post('/', protect, authorize('admin'), createCoupon);
+router.get('/:id', protect, authorize('admin'), getCouponById);
+router.put('/:id', protect, authorize('admin'), updateCoupon);
+router.delete('/:id', protect, authorize('admin'), deleteCoupon);
 
 module.exports = router;

@@ -1,23 +1,15 @@
 const express = require('express');
-const router = express.Router();
-const { protect, admin } = require('../middleware/authMiddleware');
 const {
     getDashboardAnalytics,
     getProductAnalytics,
     getSalesAnalytics
 } = require('../controllers/analyticsController');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-// All analytics routes require admin access
-router.use(protect);
-router.use(admin);
+const router = express.Router();
 
-// Dashboard analytics
-router.get('/dashboard', getDashboardAnalytics);
-
-// Product analytics
-router.get('/products', getProductAnalytics);
-
-// Sales analytics
-router.get('/sales', getSalesAnalytics);
+router.get('/dashboard', protect, authorize('admin'), getDashboardAnalytics);
+router.get('/products', protect, authorize('admin'), getProductAnalytics);
+router.get('/sales', protect, authorize('admin'), getSalesAnalytics);
 
 module.exports = router;

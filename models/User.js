@@ -1,67 +1,109 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const validator = require('validator');
 
-const userSchema = new mongoose.Schema({
-    name: {
-        type: String,
-        required: true,
-        trim: true,
-        index: true           // search optimization
+const addressSchema = new mongoose.Schema(
+    {
+        street: String,
+        city: String,
+        state: String,
+        country: String,
+        postalCode: String
     },
-    email: {
-        type: String,
-        required: true,
-        unique: true,
-        lowercase: true,
-        index: true
-    },
-    password: {
-        type: String,
-        required: true,
-        minlength: 6
-    },
-    phone: {
-        type: String,
-        index: true
-    },
-    googleId: {
-        type: String,
-        sparse: true,
-        index: true
-    },
-    role: {
-        type: String,
-        enum: ['user', 'admin'],
-        default: 'user'
-    },
-    address: [
-        {
-            fullName: String,
-            phone: String,
-            pincode: String,
-            city: String,
-            state: String,
-            addressLine: String,
-            landmark: String,
-            default: { type: Boolean, default: false }
+    { _id: false }
+);
+
+const userSchema = new mongoose.Schema(
+    {
+        name: {
+            type: String,
+            required: true,
+            trim: true
+        },
+        email: {
+            type: String,
+            required: true,
+            unique: true,
+            lowercase: true,
+            trim: true,
+            validate: [validator.isEmail, 'Please provide a valid email address']
+        },
+        password: {
+            type: String,
+            required: true,
+            minlength: 6
+        },
+        phone: {
+            type: String,
+            trim: true
+        },
+        address: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+        },
+        deliveryAddresses: [addressSchema],
+        role: {
+            type: String,
+            enum: ['user', 'admin', 'staff'],
+            default: 'user'
+        },
+        isActive: {
+            type: Boolean,
+            default: true
+        },
+        googleId: {
+            type: String,
+            index: true,
+            sparse: true
+        },
+        avatar: {
+            type: String
+        },
+        lastLoginAt: {
+            type: Date
+        },
+        resetPasswordToken: String,
+        resetPasswordExpires: Date,
+        meta: {
+            type: Map,
+            of: mongoose.Schema.Types.Mixed,
+            default: {}
         }
-    ],
-    isActive: {
-        type: Boolean,
-        default: true
-    }
-}, { timestamps: true });
+    },
+    { timestamps: true }
+);
 
-// Hash password before saving
-userSchema.pre('save', async function (next) {
-    if (!this.isModified('password')) return next();
-    this.password = await bcrypt.hash(this.password, 10);
+userSchema.pre('save', async function hashPassword(next) {
+    if (!this.isModified('password')) {
+        return next();
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
     next();
 });
 
-// Method to compare password
-userSchema.methods.matchPassword = async function (enteredPassword) {
-    return await bcrypt.compare(enteredPassword, this.password);
+userSchema.methods.matchPassword = function matchPassword(enteredPassword) {
+    return bcrypt.compare(enteredPassword, this.password);
 };
 
+userSchema.methods.toSafeObject = function toSafeObject() {
+    const obj = this.toObject({ getters: true, virtuals: false });
+    delete obj.password;
+    delete obj.resetPasswordToken;
+    delete obj.resetPasswordExpires;
+    return obj;
+};
+
+userSchema.set('toJSON', {
+    transform: (_doc, ret) => {
+        delete ret.password;
+        delete ret.__v;
+        delete ret.resetPasswordToken;
+        delete ret.resetPasswordExpires;
+        return ret;
+    }
+});
+
 module.exports = mongoose.model('User', userSchema);
+

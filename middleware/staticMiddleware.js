@@ -1,55 +1,57 @@
-const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const express = require('express');
+const { getAllowedOrigins } = require('./securityMiddleware');
 
-// Middleware to add CORS headers for uploaded files
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+
+const ensureUploadsDir = () => {
+    if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+};
+
 const addCorsHeaders = (req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:5173');
+    const origin = req.headers.origin;
+    const allowedOrigins = getAllowedOrigins();
+    const allowedOrigin = allowedOrigins.includes(origin)
+        ? origin
+        : allowedOrigins[0] || 'http://localhost:5173';
+
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
     next();
 };
 
-// Serve static files from uploads directory
-const serveUploads = express.static(path.join(__dirname, '../uploads'), {
-    maxAge: '1d', // Cache for 1 day
-    etag: true,
-    lastModified: true
-});
-
-// Middleware to handle missing files
-const handleMissingFiles = (req, res, next) => {
-    const filePath = path.join(__dirname, '../uploads', req.path);
-    
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).json({
-            message: 'File not found',
-            path: req.path
-        });
-    }
-    
+const logFileAccess = (req, _res, next) => {
+    console.log(`[UPLOADS] ${req.method} ${req.originalUrl}`);
     next();
 };
 
-// Middleware to log file access
-const logFileAccess = (req, res, next) => {
-    if (req.path.startsWith('/uploads/')) {
-        console.log(`File accessed: ${req.path} - ${req.method} - ${req.ip}`);
-    }
-    next();
+const serveUploads = (() => {
+    ensureUploadsDir();
+    return express.static(uploadsDir, {
+        fallthrough: true,
+        maxAge: '1d',
+        setHeaders: (res) => {
+            res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type');
+        }
+    });
+})();
+
+const handleMissingFiles = (req, res) => {
+    res.status(404).json({
+        message: 'File not found',
+        path: req.originalUrl
+    });
 };
 
 module.exports = {
-    serveUploads,
-    handleMissingFiles,
+    addCorsHeaders,
     logFileAccess,
-    addCorsHeaders
+    serveUploads,
+    handleMissingFiles
 };
+

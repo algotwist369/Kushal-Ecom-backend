@@ -1,6 +1,4 @@
 const express = require('express');
-const router = express.Router();
-const { protect, admin } = require('../middleware/authMiddleware');
 const {
     sendWelcomeEmail,
     sendOrderConfirmation,
@@ -13,38 +11,21 @@ const {
     deleteNotification,
     getNotificationStats
 } = require('../controllers/notificationController');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-// All notification routes require authentication
-router.use(protect);
+const router = express.Router();
 
-// Get all notifications (Admin only)
-router.get('/', admin, getAllNotifications);
+router.get('/', protect, authorize('admin'), getAllNotifications);
+router.get('/stats', protect, authorize('admin'), getNotificationStats);
 
-// Get notification stats (Admin only)
-router.get('/stats', admin, getNotificationStats);
+router.patch('/:id/read', protect, authorize('admin'), markAsRead);
+router.patch('/mark-all-read', protect, authorize('admin'), markAllAsRead);
+router.delete('/:id', protect, authorize('admin'), deleteNotification);
 
-// Mark notification as read (Admin only)
-router.patch('/:id/read', admin, markAsRead);
-
-// Mark all notifications as read (Admin only)
-router.patch('/mark-all-read', admin, markAllAsRead);
-
-// Delete notification (Admin only)
-router.delete('/:id', admin, deleteNotification);
-
-// Send welcome email (Admin only)
-router.post('/welcome/:userId', admin, sendWelcomeEmail);
-
-// Send order confirmation (Admin only)
-router.post('/order-confirmation/:orderId', admin, sendOrderConfirmation);
-
-// Send admin notification (Admin only)
-router.post('/admin-notification/:userId', admin, sendAdminNotification);
-
-// Send order status update (Admin only)
-router.post('/order-status/:orderId', admin, sendOrderStatusUpdate);
-
-// Send bulk notification (Admin only)
-router.post('/bulk', admin, sendBulkNotification);
+router.post('/welcome/:userId', protect, authorize('admin'), sendWelcomeEmail);
+router.post('/order-confirmation/:orderId', protect, authorize('admin'), sendOrderConfirmation);
+router.post('/order-status/:orderId', protect, authorize('admin'), sendOrderStatusUpdate);
+router.post('/admin/:userId', protect, authorize('admin'), sendAdminNotification);
+router.post('/bulk', protect, authorize('admin'), sendBulkNotification);
 
 module.exports = router;

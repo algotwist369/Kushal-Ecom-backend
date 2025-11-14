@@ -1,197 +1,112 @@
-const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const multer = require('multer');
+const { ensureDirectory } = require('../utils/fileUtils');
 
-// Create uploads directory if it doesn't exist
-const createUploadsDir = (dir) => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-};
+const baseUploadsDir = path.join(__dirname, '..', 'uploads');
 
-// Generate folder name based on content type and date
-const generateFolderName = (contentType, customFolder = null) => {
-    const currentDate = new Date();
-    const year = currentDate.getFullYear();
-    const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-    const day = String(currentDate.getDate()).padStart(2, '0');
-    const dateFolder = `${year}-${month}-${day}`;
-    
-    if (customFolder) {
-        return `${contentType}/${customFolder}/${dateFolder}`;
-    }
-    
-    return `${contentType}/${dateFolder}`;
-};
+const createStorage = (subdirectories = []) => {
+    const destinationPath = path.join(baseUploadsDir, ...subdirectories);
+    ensureDirectory(destinationPath);
 
-// Advanced storage configuration
-const createStorage = (contentType, customFolder = null) => {
     return multer.diskStorage({
-        destination: (req, file, cb) => {
-            const folderName = generateFolderName(contentType, customFolder);
-            const uploadPath = path.join(__dirname, '../uploads', folderName);
-            createUploadsDir(uploadPath);
-            cb(null, uploadPath);
+        destination: (_req, _file, cb) => {
+            cb(null, destinationPath);
         },
-        filename: (req, file, cb) => {
-            // Generate descriptive filename
-            const timestamp = Date.now();
-            const random = Math.round(Math.random() * 1E9);
+        filename: (_req, file, cb) => {
             const ext = path.extname(file.originalname);
-            const name = path.basename(file.originalname, ext)
-                .replace(/[^a-zA-Z0-9]/g, '-')
-                .toLowerCase();
-            
-            // Add content type prefix
-            const prefix = contentType === 'products' ? 'prod' : 
-                          contentType === 'categories' ? 'cat' : 
-                          contentType === 'users' ? 'user' : 'gen';
-            
-            cb(null, `${prefix}-${name}-${timestamp}-${random}${ext}`);
+            const safeName = path
+                .basename(file.originalname, ext)
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/gi, '-')
+                .replace(/^-+|-+$/g, '');
+            const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+            cb(null, `${safeName || 'file'}-${uniqueSuffix}${ext.toLowerCase()}`);
         }
     });
 };
 
-// File filter for different content types
-const createFileFilter = (allowedTypes = /jpeg|jpg|png|gif|webp/) => {
-    return (req, file, cb) => {
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-        const mimetype = allowedTypes.test(file.mimetype);
+const getFileFilter = (allowedMimeTypes = []) => {
+    if (!allowedMimeTypes.length) {
+        return null;
+    }
 
-        if (mimetype && extname) {
-            return cb(null, true);
+    const allowed = new Set(allowedMimeTypes);
+    return (_req, file, cb) => {
+        if (allowed.has(file.mimetype)) {
+            cb(null, true);
         } else {
-            cb(new Error(`Only image files (${allowedTypes.source}) are allowed!`));
+            cb(new Error(`Unsupported file type: ${file.mimetype}`));
         }
     };
 };
 
-// Create upload configurations for different content types
-const createUploadConfig = (contentType, customFolder = null, maxFiles = 10) => {
-    return multer({
-        storage: createStorage(contentType, customFolder),
+const createUploadMiddleware = ({
+    fieldName,
+    maxCount = 1,
+    subdirectories = [],
+    limits = {},
+    allowedMimeTypes = []
+}) => {
+    if (!fieldName) {
+        throw new Error('fieldName is required to configure upload middleware');
+    }
+
+    const storage = createStorage(subdirectories);
+    const fileFilter = getFileFilter(allowedMimeTypes);
+
+    const uploader = multer({
+        storage,
         limits: {
-            fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024, // 10MB
-            files: maxFiles
+            fileSize:
+                limits.fileSize ||
+                parseInt(process.env.UPLOAD_MAX_FILE_SIZE || `${5 * 1024 * 1024}`, 10),
+            files: maxCount
         },
-        fileFilter: createFileFilter()
+        fileFilter: fileFilter || undefined
     });
+
+    return maxCount > 1
+        ? uploader.array(fieldName, maxCount)
+        : uploader.single(fieldName);
 };
 
-// Predefined upload configurations
-const uploadConfigs = {
-    // Product images with gallery and thumbnail folders
-    productImages: createUploadConfig('products', 'gallery', 10),
-    productThumbnails: createUploadConfig('products', 'thumbnails', 5),
-    packOptionImages: createUploadConfig('products', 'pack-options', 5),
-    
-    // Category images
-    categoryImages: createUploadConfig('categories', 'icons', 3),
-    
-    // User files
-    userAvatars: createUploadConfig('users', 'avatars', 1),
-    userDocuments: createUploadConfig('users', 'documents', 5),
-    
-    // Review images
-    reviewImages: createUploadConfig('reviewImg', null, 5),
-    
-    // General files
-    generalFiles: createUploadConfig('general', 'temp', 10),
-    archivedFiles: createUploadConfig('general', 'archived', 20),
-    
-    // Invoice files
-    invoiceFiles: createUploadConfig('invoices', null, 5),
-    
-    // Export files
-    exportFiles: createUploadConfig('exports', null, 10)
-};
-
-// Upload middlewares
-const uploadProductImages = uploadConfigs.productImages.array('productImages', 10);
-const uploadProductThumbnails = uploadConfigs.productThumbnails.array('thumbnails', 5);
-const uploadPackOptionImages = uploadConfigs.packOptionImages.array('packOptionImages', 5);
-const uploadCategoryImages = uploadConfigs.categoryImages.single('categoryImage');
-const uploadUserAvatars = uploadConfigs.userAvatars.single('avatar');
-const uploadUserDocuments = uploadConfigs.userDocuments.array('documents', 5);
-const uploadReviewImages = uploadConfigs.reviewImages.array('images', 5);
-const uploadGeneralFiles = uploadConfigs.generalFiles.array('files', 10);
-const uploadInvoiceFiles = uploadConfigs.invoiceFiles.single('invoice');
-const uploadExportFiles = uploadConfigs.exportFiles.single('export');
-
-// Error handling middleware
-const handleUploadError = (error, req, res, next) => {
-    if (error instanceof multer.MulterError) {
-        if (error.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({
-                message: 'File too large. Maximum size allowed is 10MB.'
-            });
-        }
-        if (error.code === 'LIMIT_FILE_COUNT') {
-            return res.status(400).json({
-                message: 'Too many files. Maximum files exceeded.'
-            });
-        }
-        if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-            return res.status(400).json({
-                message: 'Unexpected field name for file upload.'
-            });
-        }
+const buildPublicPath = (absolutePath, overrideSegments = []) => {
+    const fileName = path.basename(absolutePath);
+    if (overrideSegments.length) {
+        return path.join('uploads', ...overrideSegments, fileName);
     }
-    
-    if (error.message.includes('Only image files')) {
-        return res.status(400).json({
-            message: error.message
-        });
-    }
-    
-    next(error);
+
+    const relative = path.relative(path.join(__dirname, '..'), absolutePath);
+    return relative.startsWith('uploads')
+        ? relative
+        : path.join('uploads', path.basename(absolutePath));
 };
 
-// Helper function to get file URL with proper path
-const getFileUrl = (req, filePath, contentType, customFolder = null) => {
-    if (!filePath) return null;
-    
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const relativePath = filePath.replace(/\\/g, '/');
-    const uploadsIndex = relativePath.indexOf('/uploads/');
-    
-    if (uploadsIndex !== -1) {
-        return `${baseUrl}${relativePath.substring(uploadsIndex)}`;
-    }
-    
-    // Fallback: construct URL from file path
-    const fileName = path.basename(filePath);
-    const folderName = generateFolderName(contentType, customFolder);
-    return `${baseUrl}/uploads/${folderName}/${fileName}`;
+const getFileUrl = (req, absolutePath, ...overrideSegments) => {
+    const publicPath = buildPublicPath(absolutePath, overrideSegments);
+    const normalized = publicPath.split(path.sep).join('/');
+    const host = req.get('host');
+    const protocol = req.protocol || 'http';
+
+    return `${protocol}://${host}/${normalized.replace(/^\/+/, '')}`;
 };
 
-// Helper function to delete file
-const deleteFile = (filePath) => {
+const deleteFile = (absolutePath) => {
     try {
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+        if (absolutePath && fs.existsSync(absolutePath)) {
+            fs.unlinkSync(absolutePath);
             return true;
         }
-        return false;
     } catch (error) {
-        console.error('Error deleting file:', error);
-        return false;
+        console.error(`Failed to delete file ${absolutePath}:`, error.message);
     }
+    return false;
 };
 
 module.exports = {
-    uploadProductImages,
-    uploadProductThumbnails,
-    uploadPackOptionImages,
-    uploadCategoryImages,
-    uploadUserAvatars,
-    uploadUserDocuments,
-    uploadReviewImages,
-    uploadGeneralFiles,
-    uploadInvoiceFiles,
-    uploadExportFiles,
-    handleUploadError,
+    createUploadMiddleware,
     getFileUrl,
-    deleteFile,
-    generateFolderName
+    deleteFile
 };
+

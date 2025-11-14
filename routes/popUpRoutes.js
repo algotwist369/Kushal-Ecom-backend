@@ -8,23 +8,18 @@ const {
     deletePopUp,
     trackPopUpClick
 } = require('../controllers/popUpController');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
 const router = express.Router();
 
-// Public routes
-router.get('/active', getActivePopUp);
-router.post('/:id/click', trackPopUpClick); // Track clicks
+router.get('/active', cacheMiddleware(120), getActivePopUp);
+router.post('/:id/click', trackPopUpClick);
 
-// Admin routes - protected
-router.route('/')
-    .get(protect, admin, getAllPopUps)
-    .post(protect, admin, createPopUp);
-
-router.route('/:id')
-    .get(protect, admin, getPopUpById)
-    .put(protect, admin, updatePopUp)
-    .delete(protect, admin, deletePopUp);
+router.get('/', protect, authorize('admin'), getAllPopUps);
+router.post('/', protect, authorize('admin'), createPopUp);
+router.put('/:id', protect, authorize('admin'), updatePopUp);
+router.delete('/:id', protect, authorize('admin'), deletePopUp);
+router.get('/:id', protect, authorize('admin'), getPopUpById);
 
 module.exports = router;
-

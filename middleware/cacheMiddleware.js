@@ -1,75 +1,39 @@
-const NodeCache = require('node-cache');
+const cacheStore = new Map();
 
-// Create cache instance with 5 minutes default TTL
-const cache = new NodeCache({ 
-    stdTTL: 300, // 5 minutes
-    checkperiod: 120, // Check for expired keys every 2 minutes
-    useClones: false // Don't clone objects for better performance
-});
+const buildCacheKey = (req) => {
+    const { originalUrl, method, body } = req;
+    if (method !== 'GET') return null;
+    const bodyKey = body && Object.keys(body).length ? JSON.stringify(body) : '';
+    return `${originalUrl}:${bodyKey}`;
+};
 
-// Cache middleware factory
-const cacheMiddleware = (ttl = 300) => {
-    return (req, res, next) => {
-        // Only cache GET requests
-        if (req.method !== 'GET') {
-            return next();
-        }
+const cacheMiddleware = (ttlSeconds = 60) => (req, res, next) => {
+    const key = buildCacheKey(req);
+    if (!key) {
+        return next();
+    }
 
-        // Create cache key from URL and query params
-        const cacheKey = `${req.originalUrl}:${JSON.stringify(req.query)}`;
-        
-        // Try to get from cache
-        const cachedData = cache.get(cacheKey);
-        if (cachedData) {
-            console.log(`Cache hit for key: ${cacheKey}`);
-            return res.json(cachedData);
-        }
+    const cacheEntry = cacheStore.get(key);
+    if (cacheEntry && cacheEntry.expiry > Date.now()) {
+        res.setHeader('X-Cache', 'HIT');
+        return res.json(cacheEntry.payload);
+    }
 
-        // Store original json method
-        const originalJson = res.json;
-        
-        // Override json method to cache response
-        res.json = function(data) {
-            // Cache the response
-            cache.set(cacheKey, data, ttl);
-            console.log(`Cached data for key: ${cacheKey} with TTL: ${ttl}s`);
-            
-            // Call original json method
-            return originalJson.call(this, data);
-        };
+    res.setHeader('X-Cache', 'MISS');
 
-        next();
+    const originalJson = res.json.bind(res);
+    res.json = (payload) => {
+        cacheStore.set(key, {
+            payload,
+            expiry: Date.now() + ttlSeconds * 1000
+        });
+        return originalJson(payload);
     };
-};
 
-// Cache invalidation helper
-const invalidateCache = (pattern) => {
-    const keys = cache.keys();
-    const regex = new RegExp(pattern);
-    
-    keys.forEach(key => {
-        if (regex.test(key)) {
-            cache.del(key);
-            console.log(`Invalidated cache key: ${key}`);
-        }
-    });
-};
-
-// Clear all cache
-const clearAllCache = () => {
-    cache.flushAll();
-    console.log('All cache cleared');
-};
-
-// Get cache stats
-const getCacheStats = () => {
-    return cache.getStats();
+    next();
 };
 
 module.exports = {
-    cache,
-    cacheMiddleware,
-    invalidateCache,
-    clearAllCache,
-    getCacheStats
+    cacheMiddleware
 };
+

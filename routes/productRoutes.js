@@ -1,5 +1,7 @@
 const express = require('express');
 const {
+    getAllProductsByFilter,
+    getAllProductsAdmin,
     createProduct,
     getProducts,
     getProductById,
@@ -7,31 +9,30 @@ const {
     deleteProduct,
     addOrUpdateReview,
     deleteReview,
-    getAllProductsByFilter,
-    getAllProductsAdmin,
     getBestsellers,
-    getNewArrivals,
-} = require('../controllers/productController.js');
-const { protect, admin } = require('../middleware/authMiddleware.js');
-const { validateProduct, validateProductUpdate, validateObjectId } = require('../middleware/validationMiddleware.js');
+    getNewArrivals
+} = require('../controllers/productController');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
 const router = express.Router();
 
-// Public
-router.get('/', getProducts);
-router.get('/bestsellers/list', getBestsellers); // Must be before /:id to avoid conflict
-router.get('/newarrivals/list', getNewArrivals); // Must be before /:id to avoid conflict
-router.get('/:id', getProductById);
+// Public product endpoints
+router.get('/', cacheMiddleware(120), getProducts);
 router.post('/filter', getAllProductsByFilter);
-
-// Admin
-router.get('/admin/all', protect, admin, getAllProductsAdmin);
-router.post('/', protect, admin, validateProduct, createProduct);
-router.put('/:id', protect, admin, validateObjectId, validateProductUpdate, updateProduct);
-router.delete('/:id', protect, admin, validateObjectId, deleteProduct);
-
-// Reviews (User)
+router.get('/bestsellers/list', cacheMiddleware(300), getBestsellers);
+router.get('/new-arrivals', cacheMiddleware(300), getNewArrivals);
+// Reviews (authenticated users)
 router.post('/:id/review', protect, addOrUpdateReview);
 router.delete('/:id/review/:reviewId', protect, deleteReview);
+
+// Admin product management
+router.get('/admin/all', protect, authorize('admin'), getAllProductsAdmin);
+router.post('/', protect, authorize('admin'), createProduct);
+router.put('/:id', protect, authorize('admin'), updateProduct);
+router.delete('/:id', protect, authorize('admin'), deleteProduct);
+
+// Fetch by id or slug (must be last to avoid conflicts)
+router.get('/:id', getProductById);
 
 module.exports = router;

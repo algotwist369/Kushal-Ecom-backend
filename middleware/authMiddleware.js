@@ -2,65 +2,61 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const BlacklistedToken = require('../models/BlacklistedToken');
 
+const getTokenFromRequest = (req) => {
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        return req.headers.authorization.split(' ')[1];
+    }
+
+    if (req.cookies && req.cookies.token) {
+        return req.cookies.token;
+    }
+
+    return null;
+};
+
 const protect = async (req, res, next) => {
-    let token;
-
-    if (
-        req.headers.authorization &&
-        req.headers.authorization.startsWith('Bearer')
-    ) {
-        token = req.headers.authorization.split(' ')[1];
-    }
-
-    if (!token) {
-        return res.status(401).json({ message: 'Not authorized, no token' });
-    }
-
     try {
-        // Check if token is blacklisted
-        const blacklisted = await BlacklistedToken.findOne({ token });
-        if (blacklisted) {
-            return res.status(401).json({ 
-                message: 'Token has been invalidated. Please login again.',
-                reason: blacklisted.reason
-            });
+        const token = getTokenFromRequest(req);
+        if (!token) {
+            return res.status(401).json({ message: 'Not authorized, no token' });
+        }
+
+        const isBlacklisted = await BlacklistedToken.exists({ token });
+        if (isBlacklisted) {
+            return res.status(401).json({ message: 'Session expired. Please log in again.' });
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = await User.findById(decoded.id).select('-password');
-        
-        if (!req.user) {
-            return res.status(401).json({ message: 'User not found' });
+        const user = await User.findById(decoded.id);
+
+        if (!user || !user.isActive) {
+            return res.status(401).json({ message: 'Account is inactive or no longer exists' });
         }
 
-        // Check if user is active
-        if (!req.user.isActive) {
-            // Blacklist token if user is inactive
-            await BlacklistedToken.create({
-                token,
-                userId: req.user._id,
-                reason: 'user_deactivated',
-                expiresAt: new Date(decoded.exp * 1000)
-            });
-            
-            return res.status(403).json({ 
-                message: 'Your account has been deactivated. Please contact support.'
-            });
-        }
+        req.user = user;
+        req.token = token;
 
-        req.token = token; // Store token for logout
         next();
     } catch (error) {
-        return res.status(401).json({ message: 'Not authorized, token failed' });
+        console.error('Auth middleware error:', error);
+        return res.status(401).json({ message: 'Not authorized' });
     }
 };
 
-const admin = (req, res, next) => {
-    if (req.user && req.user.role === 'admin') {
-        next();
-    } else {
-        res.status(403).json({ message: 'Access denied. Admin role required.' });
+const authorize = (...allowedRoles) => (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: 'Not authorized' });
     }
+
+    if (allowedRoles.length && !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    next();
 };
 
-module.exports = { protect, admin };
+module.exports = {
+    protect,
+    authorize
+};
+

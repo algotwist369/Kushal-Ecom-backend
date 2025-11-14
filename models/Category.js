@@ -1,40 +1,50 @@
 const mongoose = require('mongoose');
-const { generateUniqueSlug } = require('../utils/generateSlug');
-const categorySchema = new mongoose.Schema({
-    name: {
-        type: String,
-        required: true,
-        trim: true,
-        unique: true,
-        index: true
-    },
-    slug: {
-        type: String,
-        unique: true,
-        lowercase: true
-    },
-    description: String,
-    image: String, // optional
-    isActive: {
-        type: Boolean,
-        default: true
-    }
-}, { timestamps: true });
+const { buildUniqueSlug } = require('../utils/generateSlug');
 
-// Generate slug before saving
-categorySchema.pre('save', async function (next) {
-    if (this.isModified('name') && !this.slug) {
-        this.slug = await generateUniqueSlug(this.constructor, this.name, this._id);
-    }
-    next();
-});
+const categorySchema = new mongoose.Schema(
+    {
+        name: {
+            type: String,
+            required: true,
+            trim: true
+        },
+        slug: {
+            type: String,
+            unique: true,
+            index: true
+        },
+        description: String,
+        image: String,
+        isActive: {
+            type: Boolean,
+            default: true
+        },
+        parent: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Category'
+        },
+        attributes: [
+            {
+                name: String,
+                values: [String]
+            }
+        ],
+        metaTitle: String,
+        metaDescription: String,
+        displayOrder: {
+            type: Number,
+            default: 0
+        }
+    },
+    { timestamps: true }
+);
 
-// Update slug if name changes
-categorySchema.pre('save', async function (next) {
-    if (this.isModified('name') && this.slug) {
-        this.slug = await generateUniqueSlug(this.constructor, this.name, this._id);
+categorySchema.pre('save', async function setSlug(next) {
+    if (this.isModified('name') || !this.slug) {
+        this.slug = await buildUniqueSlug(this.constructor, this.name, this._id);
     }
     next();
 });
 
 module.exports = mongoose.model('Category', categorySchema);
+

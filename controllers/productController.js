@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const User = require('../models/User');
@@ -6,138 +8,179 @@ const { handleAsync } = require('../utils/handleAsync');
 const validateObjectId = require('../utils/validateObjectId');
 const sendEmail = require('../utils/sendEmail');
 
-const getAllProductsByFilter = handleAsync(async (req, res) => {
-  let {
-    page = 1,
-    limit = 12,
-    categories,
-    minPrice,
-    maxPrice,
-    priceBuckets, // e.g., [{min:0,max:500},{min:500,max:1000}]
-    rating,
-    attributes,
-    search,
-    sortBy
-  } = req.body;
+const uploadsRoot = path.resolve(__dirname, '..');
 
-  page = Number(page);
-  limit = Number(limit);
-  const skip = (page - 1) * limit;
+const resolveLocalUploadPath = (imageUrl) => {
+    if (!imageUrl || typeof imageUrl !== 'string') return null;
 
-  let filter = { isActive: true };
+    const withoutHost = imageUrl.replace(/^https?:\/\/[^\/]+/, '');
+    if (!withoutHost) return null;
 
-  // ----------------
-  // Multiple categories filter
-  // ----------------
-  if (categories && Array.isArray(categories) && categories.length > 0) {
-    filter.category = { $in: categories };
-  }
+    const relativePath = withoutHost.replace(/^\/+/, '');
+    if (!relativePath) return null;
 
-  // ----------------
-  // Price filter / price buckets
-  // ----------------
-  if (priceBuckets && Array.isArray(priceBuckets) && priceBuckets.length > 0) {
-    const bucketConditions = priceBuckets.map(b => ({
-      price: { $gte: b.min, $lte: b.max }
-    }));
-    filter.$or = bucketConditions;
-  } else if (minPrice || maxPrice) {
-    filter.price = {};
-    if (minPrice) filter.price.$gte = Number(minPrice);
-    if (maxPrice) filter.price.$lte = Number(maxPrice);
-  }
-
-  // ----------------
-  // Rating filter
-  // ----------------
-  if (rating) filter.averageRating = { $gte: Number(rating) };
-
-  // ----------------
-  // Attributes filter
-  // ----------------
-  if (attributes && typeof attributes === 'object') {
-    Object.keys(attributes).forEach(attrKey => {
-      filter[`attributes.${attrKey}`] = { $in: attributes[attrKey] };
-    });
-  }
-
-  // ----------------
-  // Text search (using regex for broader compatibility)
-  // ----------------
-  if (search && search.trim() !== '') {
-    const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    // Don't override $or if it already exists from price buckets
-    if (filter.$or) {
-      // If $or already exists, wrap both conditions in $and
-      const existingOr = filter.$or;
-      delete filter.$or;
-      filter.$and = [
-        { $or: existingOr },
-        { $or: [{ name: searchRegex }, { description: searchRegex }] }
-      ];
-    } else {
-      filter.$or = [
-        { name: searchRegex },
-        { description: searchRegex }
-      ];
+    const normalizedRelativePath = path.normalize(relativePath);
+    if (normalizedRelativePath.startsWith('..') || path.isAbsolute(normalizedRelativePath)) {
+        return null;
     }
-  }
 
-  // ----------------
-  // Sorting
-  // ----------------
-  let sort = {};
-  switch (sortBy) {
-    case 'priceAsc':
-      sort.price = 1;
-      break;
-    case 'priceDesc':
-      sort.price = -1;
-      break;
-    case 'rating':
-      sort.averageRating = -1;
-      break;
-    case 'newest':
-      sort.createdAt = -1;
-      break;
-    default:
-      sort.createdAt = -1;
-  }
+    const absolutePath = path.resolve(uploadsRoot, normalizedRelativePath);
+    const relativeToRoot = path.relative(uploadsRoot, absolutePath);
+    if (relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) {
+        return null;
+    }
 
-  // ----------------
-  // Query
-  // ----------------
-  const total = await Product.countDocuments(filter);
-  const products = await Product.find(filter)
-    .sort(sort)
-    .skip(skip)
-    .limit(limit)
-    .populate('category', 'name');
+    return absolutePath;
+};
 
-  // ----------------
-  // Chunking / batch data
-  // ----------------
-  const chunkSize = 4; // rows for frontend UI
-  const chunks = [];
-  for (let i = 0; i < products.length; i += chunkSize) {
-    chunks.push(products.slice(i, i + chunkSize));
-  }
+const deleteLocalFileIfExists = (imageUrl) => {
+    const filePath = resolveLocalUploadPath(imageUrl);
+    if (!filePath) return;
 
-  res.json({
-    total,
-    page,
-    pages: Math.ceil(total / limit),
-    chunkSize,
-    chunks,
-    products // flat array as well
-  });
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log('🗑️ Deleted review image:', filePath);
+        } else {
+            console.log('⚠️ Image file not found:', filePath);
+        }
+    } catch (error) {
+        console.error('❌ Error deleting image:', imageUrl, error.message);
+    }
+};
+
+const getAllProductsByFilter = handleAsync(async (req, res) => {
+    let {
+        page = 1,
+        limit = 12,
+        categories,
+        minPrice,
+        maxPrice,
+        priceBuckets, // e.g., [{min:0,max:500},{min:500,max:1000}]
+        rating,
+        attributes,
+        search,
+        sortBy
+    } = req.body;
+
+    page = Number(page);
+    limit = Number(limit);
+    const skip = (page - 1) * limit;
+
+    let filter = { isActive: true };
+
+    // ----------------
+    // Multiple categories filter
+    // ----------------
+    if (categories && Array.isArray(categories) && categories.length > 0) {
+        filter.category = { $in: categories };
+    }
+
+    // ----------------
+    // Price filter / price buckets
+    // ----------------
+    if (priceBuckets && Array.isArray(priceBuckets) && priceBuckets.length > 0) {
+        const bucketConditions = priceBuckets.map(b => ({
+            price: { $gte: b.min, $lte: b.max }
+        }));
+        filter.$or = bucketConditions;
+    } else if (minPrice || maxPrice) {
+        filter.price = {};
+        if (minPrice) filter.price.$gte = Number(minPrice);
+        if (maxPrice) filter.price.$lte = Number(maxPrice);
+    }
+
+    // ----------------
+    // Rating filter
+    // ----------------
+    if (rating) filter.averageRating = { $gte: Number(rating) };
+
+    // ----------------
+    // Attributes filter
+    // ----------------
+    if (attributes && typeof attributes === 'object') {
+        Object.keys(attributes).forEach(attrKey => {
+            filter[`attributes.${attrKey}`] = { $in: attributes[attrKey] };
+        });
+    }
+
+    // ----------------
+    // Text search (using regex for broader compatibility)
+    // ----------------
+    if (search && search.trim() !== '') {
+        const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        // Don't override $or if it already exists from price buckets
+        if (filter.$or) {
+            // If $or already exists, wrap both conditions in $and
+            const existingOr = filter.$or;
+            delete filter.$or;
+            filter.$and = [
+                { $or: existingOr },
+                { $or: [{ name: searchRegex }, { description: searchRegex }] }
+            ];
+        } else {
+            filter.$or = [
+                { name: searchRegex },
+                { description: searchRegex }
+            ];
+        }
+    }
+
+    // ----------------
+    // Sorting
+    // ----------------
+    let sort = {};
+    switch (sortBy) {
+        case 'priceAsc':
+            sort.price = 1;
+            break;
+        case 'priceDesc':
+            sort.price = -1;
+            break;
+        case 'rating':
+            sort.averageRating = -1;
+            break;
+        case 'newest':
+            sort.createdAt = -1;
+            break;
+        default:
+            sort.createdAt = -1;
+    }
+
+    // ----------------
+    // Query
+    // ----------------
+    const total = await Product.countDocuments(filter);
+    const products = await Product.find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .populate('category', 'name');
+
+    // ----------------
+    // Chunking / batch data
+    // ----------------
+    const chunkSize = 4; // rows for frontend UI
+    const chunks = [];
+    for (let i = 0; i < products.length; i += chunkSize) {
+        chunks.push(products.slice(i, i + chunkSize));
+    }
+
+    res.json({
+        total,
+        page,
+        pages: Math.ceil(total / limit),
+        chunkSize,
+        chunks,
+        products // flat array as well
+    });
 });
 
 const createProduct = handleAsync(async (req, res) => {
     // Extract all fields except slug (slug is auto-generated from name)
     const { slug, ...productData } = req.body;
-    
-    const { 
+
+    const {
         name, description, price, discountPrice, stock, category, images, attributes, isActive,
         // Ayurvedic-specific fields
         ingredients, benefits, dosage, contraindications, shelfLife, storageInstructions,
@@ -199,12 +242,13 @@ const createProduct = handleAsync(async (req, res) => {
     });
 
     const createdProduct = await product.save();
+    console.log('✅ Product created successfully:', createdProduct._id, createdProduct.name);
 
     // Send email notification to all registered users
     try {
         const users = await User.find({ isActive: true });
         const productUrl = `${process.env.FRONTEND_URL}/products/${createdProduct._id}`;
-        
+
         const emailSubject = `New Product Alert: ${createdProduct.name} 🌿`;
         const emailHtml = `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -307,26 +351,26 @@ const getAllProductsAdmin = handleAsync(async (req, res) => {
     const skip = (page - 1) * limit;
 
     let filter = {};
-    
+
     // Category filter
     if (category) filter.category = category;
-    
+
     // Price filter
     if (minPrice || maxPrice) {
         filter.price = {};
         if (minPrice) filter.price.$gte = Number(minPrice);
         if (maxPrice) filter.price.$lte = Number(maxPrice);
     }
-    
+
     // Status filter (active/inactive)
     if (status === 'active') filter.isActive = true;
     else if (status === 'inactive') filter.isActive = false;
     // If status is 'all' or undefined, don't filter by isActive
-    
+
     // Stock filter
     if (stock === 'instock') filter.stock = { $gt: 0 };
     else if (stock === 'outofstock') filter.stock = 0;
-    
+
     // Search filter
     if (search && search.trim() !== '') {
         filter.$or = [
@@ -375,12 +419,12 @@ const getAllProductsAdmin = handleAsync(async (req, res) => {
 
     const count = await Product.countDocuments(filter);
 
-    res.json({ 
-        products, 
-        total: count, 
-        page, 
+    res.json({
+        products,
+        total: count,
+        page,
         pages: Math.ceil(count / limit),
-        limit 
+        limit
     });
 });
 
@@ -399,7 +443,7 @@ const getProductById = handleAsync(async (req, res) => {
             .populate('category', 'name')
             .populate('reviews.user', 'name email');
     }
-    
+
     if (!product) {
         return res.status(404).json({ message: 'Product not found' });
     }
@@ -407,7 +451,7 @@ const getProductById = handleAsync(async (req, res) => {
     // Add rating statistics
     const productData = product.toObject();
     productData.ratingStats = product.getRatingStats();
-    
+
     // Log reviews with images for debugging
     console.log('📦 Sending product with reviews:', productData.reviews.map(r => ({
         user: r.user?.name,
@@ -415,7 +459,7 @@ const getProductById = handleAsync(async (req, res) => {
         imageCount: r.images?.length || 0,
         images: r.images
     })));
-    
+
     res.json(productData);
 });
 
@@ -428,8 +472,8 @@ const updateProduct = handleAsync(async (req, res) => {
 
     // Extract all fields except slug (slug is auto-generated from name)
     const { slug, ...updateData } = req.body;
-    
-    const { 
+
+    const {
         name, description, price, discountPrice, stock, category, images, attributes, isActive,
         // Ayurvedic-specific fields
         ingredients, benefits, dosage, contraindications, shelfLife, storageInstructions,
@@ -517,45 +561,47 @@ const addOrUpdateReview = handleAsync(async (req, res) => {
 
     const existingReview = product.reviews.find(r => r.user.toString() === req.user._id.toString());
 
-    // Parse images if it's a string (from JSON)
-    const reviewImages = typeof images === 'string' ? JSON.parse(images) : (images || []);
-    
+    let reviewImages = [];
+    if (Array.isArray(images)) {
+        reviewImages = images;
+    } else if (typeof images === 'string') {
+        const trimmedImages = images.trim();
+        if (trimmedImages) {
+            try {
+                const parsedImages = JSON.parse(trimmedImages);
+                if (!Array.isArray(parsedImages)) {
+                    return res.status(400).json({ message: 'Images payload must be an array' });
+                }
+                reviewImages = parsedImages;
+            } catch (error) {
+                console.error('❌ Invalid review images payload:', error.message);
+                return res.status(400).json({ message: 'Invalid images payload' });
+            }
+        }
+    } else if (images !== undefined && images !== null) {
+        return res.status(400).json({ message: 'Images payload must be an array' });
+    }
+
     console.log('🖼️ Parsed review images:', reviewImages);
 
     if (existingReview) {
         // Delete old images that are not in the new images array
         const oldImages = existingReview.images || [];
         const imagesToDelete = oldImages.filter(img => !reviewImages.includes(img));
-        
+
         if (imagesToDelete.length > 0) {
-            const fs = require('fs');
-            const path = require('path');
-            
-            imagesToDelete.forEach(imageUrl => {
-                try {
-                    const urlPath = imageUrl.replace(/^https?:\/\/[^\/]+/, '');
-                    const filePath = path.join(__dirname, '..', urlPath);
-                    
-                    if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                        console.log('🗑️ Deleted old review image:', filePath);
-                    }
-                } catch (error) {
-                    console.error('❌ Error deleting old image:', imageUrl, error.message);
-                }
-            });
-            
+            imagesToDelete.forEach(deleteLocalFileIfExists);
             console.log(`✅ Deleted ${imagesToDelete.length} old image(s) during review update`);
         }
-        
+
         existingReview.rating = rating;
         existingReview.comment = comment;
         existingReview.images = reviewImages;
         console.log('✏️ Updated existing review with images:', existingReview.images);
     } else {
-        product.reviews.push({ 
-            user: req.user._id, 
-            rating, 
+        product.reviews.push({
+            user: req.user._id,
+            rating,
             comment,
             images: reviewImages
         });
@@ -564,20 +610,20 @@ const addOrUpdateReview = handleAsync(async (req, res) => {
 
     // Update average rating (this already saves the product)
     await product.updateRating();
-    
+
     console.log('✅ Review saved. Total reviews:', product.reviews.length);
     console.log('🔍 Last review images:', product.reviews[product.reviews.length - 1].images);
-    
+
     // Fetch the updated product with populated fields to return
     const updatedProduct = await Product.findById(product._id)
         .populate('category', 'name')
         .populate('reviews.user', 'name email');
-    
+
     // Add rating statistics
     const productData = updatedProduct.toObject();
     productData.ratingStats = updatedProduct.getRatingStats();
-    
-    res.status(201).json({ 
+
+    res.status(201).json({
         message: 'Review submitted',
         product: productData
     });
@@ -599,33 +645,13 @@ const deleteReview = handleAsync(async (req, res) => {
 
     // Delete associated images from server
     if (review.images && review.images.length > 0) {
-        const fs = require('fs');
-        const path = require('path');
-        
-        review.images.forEach(imageUrl => {
-            try {
-                // Extract file path from URL (e.g., /uploads/reviewImg/2025-10-18/filename.png)
-                const urlPath = imageUrl.replace(/^https?:\/\/[^\/]+/, ''); // Remove domain
-                const filePath = path.join(__dirname, '..', urlPath);
-                
-                if (fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
-                    console.log('🗑️ Deleted review image:', filePath);
-                } else {
-                    console.log('⚠️ Image file not found:', filePath);
-                }
-            } catch (error) {
-                console.error('❌ Error deleting image:', imageUrl, error.message);
-                // Don't fail the review deletion if image deletion fails
-            }
-        });
-        
+        review.images.forEach(deleteLocalFileIfExists);
         console.log(`✅ Deleted ${review.images.length} image(s) for review ${req.params.reviewId}`);
     }
 
     // Remove the review using splice
     product.reviews.splice(reviewIndex, 1);
-    
+
     // Update rating
     await product.updateRating();
 
@@ -636,11 +662,11 @@ const deleteReview = handleAsync(async (req, res) => {
 const getBestsellers = handleAsync(async (req, res) => {
     const { limit = 8 } = req.query;
     const limitNum = parseInt(limit);
-    
+
     try {
         // Check if Order collection exists and has data
         const orderCount = await Order.countDocuments();
-        
+
         // If no orders, fallback to popular products immediately
         if (orderCount === 0) {
             const fallbackProducts = await Product.find({ isActive: true })
@@ -710,9 +736,9 @@ const getBestsellers = handleAsync(async (req, res) => {
             _id: { $in: productIds },
             isActive: true
         })
-        .populate('category', 'name')
-        .select('-reviews')
-        .lean();
+            .populate('category', 'name')
+            .select('-reviews')
+            .lean();
 
         // Create a map for easy lookup
         const productMap = {};
@@ -742,7 +768,7 @@ const getBestsellers = handleAsync(async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching bestsellers:', error);
-        
+
         // Fallback: return products sorted by rating if aggregation fails
         const fallbackProducts = await Product.find({ isActive: true })
             .populate('category', 'name')
@@ -765,7 +791,7 @@ const getBestsellers = handleAsync(async (req, res) => {
 const getNewArrivals = handleAsync(async (req, res) => {
     const { limit = 8 } = req.query;
     const limitNum = parseInt(limit);
-    
+
     try {
         // Get recently added products (last 30 days or newest products)
         const thirtyDaysAgo = new Date();
@@ -775,11 +801,11 @@ const getNewArrivals = handleAsync(async (req, res) => {
             isActive: true,
             createdAt: { $gte: thirtyDaysAgo }
         })
-        .populate('category', 'name')
-        .select('-reviews')
-        .sort({ createdAt: -1 })
-        .limit(limitNum)
-        .lean();
+            .populate('category', 'name')
+            .select('-reviews')
+            .sort({ createdAt: -1 })
+            .limit(limitNum)
+            .lean();
 
         // If less than limit found in last 30 days, get newest products overall
         if (newArrivals.length < limitNum) {
@@ -787,11 +813,11 @@ const getNewArrivals = handleAsync(async (req, res) => {
                 isActive: true,
                 _id: { $nin: newArrivals.map(p => p._id) }
             })
-            .populate('category', 'name')
-            .select('-reviews')
-            .sort({ createdAt: -1 })
-            .limit(limitNum - newArrivals.length)
-            .lean();
+                .populate('category', 'name')
+                .select('-reviews')
+                .sort({ createdAt: -1 })
+                .limit(limitNum - newArrivals.length)
+                .lean();
 
             newArrivals.push(...additionalProducts);
         }
@@ -803,7 +829,7 @@ const getNewArrivals = handleAsync(async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching new arrivals:', error);
-        
+
         // Fallback: return newest products
         const fallbackProducts = await Product.find({ isActive: true })
             .populate('category', 'name')

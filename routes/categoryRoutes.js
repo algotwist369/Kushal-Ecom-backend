@@ -1,24 +1,25 @@
-const express =  require('express');
+const express = require('express');
 const {
-  createCategory,
-  getCategories,
-  getAllCategoriesAdmin,
-  getCategoryById,
-  updateCategory,
-  deleteCategory
-} = require('../controllers/categoryController.js');
-const { protect, admin } =  require('../middleware/authMiddleware.js');
+    createCategory,
+    getCategories,
+    getAllCategoriesAdmin,
+    getCategoryById,
+    updateCategory,
+    deleteCategory
+} = require('../controllers/categoryController');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
 const router = express.Router();
 
-// Public
-router.get('/', getCategories);
-router.get('/:id', getCategoryById);
-
 // Admin
-router.get('/admin/all', protect, admin, getAllCategoriesAdmin);
-router.post('/', protect, admin, createCategory);
-router.put('/:id', protect, admin, updateCategory);
-router.delete('/:id', protect, admin, deleteCategory);
+router.get('/admin/all', protect, authorize('admin'), getAllCategoriesAdmin);
+router.post('/', protect, authorize('admin'), createCategory);
+router.put('/:id', protect, authorize('admin'), updateCategory);
+router.delete('/:id', protect, authorize('admin'), deleteCategory);
+
+// Public
+router.get('/', cacheMiddleware(600), getCategories);
+router.get('/:id', cacheMiddleware(600), getCategoryById);
 
 module.exports = router;

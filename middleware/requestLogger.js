@@ -1,55 +1,79 @@
-const morgan = require('morgan');
 const fs = require('fs');
 const path = require('path');
+const morgan = require('morgan');
+const { randomUUID } = require('crypto');
 
-// Create logs directory if it doesn't exist
-const logsDir = path.join(__dirname, '../logs');
-if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
-}
+const ensureLogDirectory = () => {
+    const logsDir = path.join(__dirname, '..', 'logs');
+    if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+    }
+    return logsDir;
+};
 
-// Create write streams for different log types
-const accessLogStream = fs.createWriteStream(
-    path.join(logsDir, 'access.log'),
-    { flags: 'a' }
-);
+const createLogStream = (fileName) => {
+    const logsDir = ensureLogDirectory();
+    const filePath = path.join(logsDir, fileName);
+    return fs.createWriteStream(filePath, { flags: 'a' });
+};
 
-const errorLogStream = fs.createWriteStream(
-    path.join(logsDir, 'error.log'),
-    { flags: 'a' }
-);
+morgan.token('request-id', (req) => req.id || '-');
 
-// Custom token for request ID
-morgan.token('reqId', (req) => req.id || 'unknown');
-
-// Custom format for access logs
-const accessLogFormat = ':reqId :remote-addr - :remote-user [:date[clf]] ":method :url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent" :response-time ms';
-
-// Access logger
-const accessLogger = morgan(accessLogFormat, {
-    stream: accessLogStream,
-    skip: (req, res) => res.statusCode < 400
-});
-
-// Error logger
-const errorLogger = morgan(accessLogFormat, {
-    stream: errorLogStream,
-    skip: (req, res) => res.statusCode < 400
-});
-
-// Console logger for development
-const consoleLogger = morgan('dev');
-
-// Request ID middleware
 const addRequestId = (req, res, next) => {
-    req.id = Math.random().toString(36).substr(2, 9);
-    res.setHeader('X-Request-ID', req.id);
+    req.id = req.id || randomUUID();
+    res.setHeader('X-Request-Id', req.id);
     next();
 };
 
+const accessLogger = morgan(
+    ':remote-addr - :remote-user [:date[iso]] ":method :url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent" :request-id',
+    {
+        stream: createLogStream('access.log')
+    }
+);
+
+const consoleLogger = (req, res, next) => {
+    const start = process.hrtime.bigint();
+    res.on('finish', () => {
+        const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+        const logMessage = `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${
+            res.statusCode
+        } (${durationMs.toFixed(2)} ms) id=${req.id}`;
+        console.log(logMessage);
+    });
+    next();
+};
+
+const errorLogStream = createLogStream('error.log');
+
+const errorLogger = (err, req, res, next) => {
+    const logEntry = JSON.stringify(
+        {
+            timestamp: new Date().toISOString(),
+            id: req.id,
+            method: req.method,
+            url: req.originalUrl,
+            status: res.statusCode,
+            message: err.message,
+            stack: err.stack
+        },
+        null,
+        2
+    );
+
+    errorLogStream.write(`${logEntry}\n`);
+
+    if (process.env.NODE_ENV !== 'production') {
+        console.error('Request error:', logEntry);
+    }
+
+    next(err);
+};
+
 module.exports = {
+    addRequestId,
     accessLogger,
     errorLogger,
-    consoleLogger,
-    addRequestId
+    consoleLogger
 };
+

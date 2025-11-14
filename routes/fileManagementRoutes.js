@@ -1,6 +1,4 @@
 const express = require('express');
-const router = express.Router();
-const { protect, admin } = require('../middleware/authMiddleware');
 const {
     getUploadStats,
     getDirectoryFiles,
@@ -8,24 +6,14 @@ const {
     cleanOldFiles,
     getFileInfo
 } = require('../controllers/fileManagementController');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-// All file management routes require admin access
-router.use(protect);
-router.use(admin);
+const router = express.Router();
 
-// Get upload statistics
-router.get('/stats', getUploadStats);
-
-// Get files in specific directory
-router.get('/directory/:directory', getDirectoryFiles);
-
-// Get file info
-router.get('/file/:directory/:filename', getFileInfo);
-
-// Delete file
-router.delete('/file/:directory/:filename', deleteFile);
-
-// Clean old files
-router.post('/clean', cleanOldFiles);
+router.get('/stats', protect, authorize('admin'), getUploadStats);
+router.get('/directory/:directory', protect, authorize('admin'), getDirectoryFiles);
+router.get('/file/:directory/:filename', protect, authorize('admin'), getFileInfo);
+router.delete('/file/:directory/:filename', protect, authorize('admin'), deleteFile);
+router.post('/clean', protect, authorize('admin'), cleanOldFiles);
 
 module.exports = router;

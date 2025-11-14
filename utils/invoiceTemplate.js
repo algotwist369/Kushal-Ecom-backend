@@ -1,240 +1,177 @@
-const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const PDFDocument = require('pdfkit');
 
-const generateInvoice = (order, filePath) => {
-    return new Promise((resolve, reject) => {
+const formatCurrency = (value) => `₹${Number(value || 0).toFixed(2)}`;
+
+const ensureDirectory = (filePath) => {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+};
+
+const addHeader = (doc) => {
+    doc
+        .fontSize(20)
+        .fillColor('#2c5530')
+        .text('Prolific Healing Herbs', { align: 'center' })
+        .moveDown(0.5)
+        .fontSize(10)
+        .fillColor('#333333')
+        .text('Holistic Wellness & Authentic Ayurvedic Products', { align: 'center' })
+        .moveDown();
+
+    doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).stroke('#2c5530').moveDown();
+};
+
+const addOrderSummary = (doc, order) => {
+    doc.fontSize(12).fillColor('#333333').text('Invoice Summary', { underline: true });
+    doc.moveDown(0.5);
+
+    const summaryData = [
+        { label: 'Invoice Number', value: `INV-${order._id.toString().slice(-8).toUpperCase()}` },
+        { label: 'Order ID', value: order._id.toString() },
+        { label: 'Order Date', value: new Date(order.createdAt).toLocaleString('en-IN') },
+        { label: 'Payment Method', value: order.paymentMethod?.toUpperCase() },
+        { label: 'Payment Status', value: order.paymentStatus?.toUpperCase() },
+        { label: 'Order Status', value: order.orderStatus?.toUpperCase() }
+    ];
+
+    summaryData.forEach(({ label, value }) => {
+        doc.font('Helvetica-Bold').text(`${label}: `, { continued: true });
+        doc.font('Helvetica').text(value || 'N/A');
+    });
+
+    doc.moveDown();
+};
+
+const addCustomerDetails = (doc, order) => {
+    doc.fontSize(12).fillColor('#333333').text('Billing & Shipping', { underline: true });
+    doc.moveDown(0.5);
+
+    const shipping = order.shippingAddress || {};
+    const customer = order.user || {};
+
+    doc
+        .font('Helvetica-Bold')
+        .text(customer.name || shipping.fullName || 'Customer')
+        .font('Helvetica')
+        .text(shipping.addressLine || '')
+        .text([shipping.city, shipping.state, shipping.pincode].filter(Boolean).join(', '))
+        .text(`Phone: ${shipping.phone || customer.phone || 'N/A'}`)
+        .text(`Email: ${shipping.email || customer.email || 'N/A'}`);
+
+    doc.moveDown();
+};
+
+const addItemsTable = (doc, order) => {
+    const tableTop = doc.y + 10;
+    const itemColumns = [50, 250, 320, 380, 450, 520];
+
+    doc.font('Helvetica-Bold').fontSize(11);
+    doc.text('Item', itemColumns[0], tableTop);
+    doc.text('Details', itemColumns[1], tableTop);
+    doc.text('Qty', itemColumns[2], tableTop, { width: 40, align: 'right' });
+    doc.text('Price', itemColumns[3], tableTop, { width: 60, align: 'right' });
+    doc.text('Offer', itemColumns[4], tableTop, { width: 60, align: 'right' });
+    doc.text('Total', itemColumns[5], tableTop, { width: 60, align: 'right' });
+
+    doc.moveTo(50, tableTop + 15).lineTo(550, tableTop + 15).stroke('#dddddd');
+    doc.font('Helvetica').fontSize(10);
+
+    let position = tableTop + 25;
+
+    order.items.forEach((item) => {
+        const details = [];
+        if (item.packDetails?.isPack) {
+            details.push(`Pack: ${item.packDetails.label || item.packDetails.packSize}`);
+        }
+        if (item.bundleDetails?.isBundle) {
+            details.push(`Bundle with ${item.bundleDetails.bundledProductName}`);
+        }
+        if (item.offerText) {
+            details.push(item.offerText);
+        }
+
+        doc.text(item.product?.name || 'Product', itemColumns[0], position, { width: 180 });
+        doc.text(details.join('\n') || '-', itemColumns[1], position, { width: 60 });
+        doc.text(item.quantity, itemColumns[2], position, { width: 40, align: 'right' });
+        doc.text(formatCurrency(item.price), itemColumns[3], position, { width: 60, align: 'right' });
+
+        const offer =
+            (item.packDetails?.savingsPercent && `${item.packDetails.savingsPercent}%`) ||
+            (item.bundleDetails?.savingsAmount && formatCurrency(item.bundleDetails.savingsAmount)) ||
+            '-';
+
+        doc.text(offer, itemColumns[4], position, { width: 60, align: 'right' });
+        doc.text(formatCurrency(item.price * item.quantity), itemColumns[5], position, { width: 60, align: 'right' });
+
+        position += 40;
+        if (position > doc.page.height - 150) {
+            doc.addPage();
+            position = doc.y;
+        }
+    });
+
+    doc.moveDown();
+};
+
+const addTotals = (doc, order) => {
+    const totalsStart = doc.y + 10;
+    const rightColumn = 400;
+
+    const rows = [
+        { label: 'Subtotal', value: order.totalAmount - order.shippingCost },
+        { label: 'Shipping', value: order.shippingCost },
+        { label: 'Discount', value: -Math.abs(order.discount || 0) },
+        { label: 'Total', value: order.finalAmount, bold: true }
+    ];
+
+    rows.forEach((row, index) => {
+        const y = totalsStart + index * 18;
+        doc.font(row.bold ? 'Helvetica-Bold' : 'Helvetica');
+        doc.text(row.label, rightColumn, y, { width: 120, align: 'right' });
+        doc.text(formatCurrency(row.value), rightColumn + 130, y, { width: 80, align: 'right' });
+    });
+
+    doc.moveDown(2);
+};
+
+const addFooter = (doc) => {
+    doc
+        .fontSize(10)
+        .fillColor('#777777')
+        .text('Thank you for shopping with Prolific Healing Herbs!', { align: 'center' })
+        .text('For support, contact support@ayurvedicstore.com or call +91-XXXXXXXXXX', {
+            align: 'center'
+        });
+};
+
+const generateInvoice = (order, filePath) =>
+    new Promise((resolve, reject) => {
         try {
-            const doc = new PDFDocument({ margin: 50, size: 'A4' });
-            
-            // Ensure directory exists
-            const dir = path.dirname(filePath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-            
+            ensureDirectory(filePath);
+
+            const doc = new PDFDocument({ margin: 50 });
             const stream = fs.createWriteStream(filePath);
             doc.pipe(stream);
 
-            // Header
-            doc.fontSize(24)
-               .fillColor('#2c5530')
-               .text('INVOICE', { align: 'center' })
-               .moveDown();
-
-            // Company Info
-            doc.fontSize(10)
-               .fillColor('#333333')
-               .text('Prolific Healing Herbs', { align: 'center' })
-               .text('Premium Ayurvedic Products', { align: 'center' })
-               .text('Email: support@ayurvedicstore.com | Phone: +91-XXXXXXXXXX', { align: 'center' })
-               .moveDown(2);
-
-            // Invoice Details
-            const invoiceDate = new Date(order.createdAt).toLocaleDateString('en-IN', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-
-            doc.fontSize(10);
-            doc.text(`Invoice Number: INV-${order._id.toString().slice(-8).toUpperCase()}`, 50, doc.y);
-            doc.text(`Order ID: #${order._id.toString().slice(-8).toUpperCase()}`);
-            doc.text(`Invoice Date: ${invoiceDate}`);
-            doc.text(`Order Date: ${new Date(order.createdAt).toLocaleString('en-IN')}`);
-            doc.moveDown();
-
-            // Customer Details
-            doc.fontSize(12)
-               .fillColor('#2c5530')
-               .text('Bill To:', 50, doc.y)
-               .fillColor('#333333')
-               .fontSize(10);
-
-            doc.text(order.user?.name || 'Customer', 50, doc.y);
-            if (order.user?.email) doc.text(order.user.email);
-            if (order.user?.phone || order.shippingAddress?.phone) {
-                doc.text(`Phone: ${order.user?.phone || order.shippingAddress?.phone}`);
-            }
-            doc.moveDown();
-
-            // Shipping Address
-            if (order.shippingAddress) {
-                doc.fontSize(12)
-                   .fillColor('#2c5530')
-                   .text('Ship To:', 50, doc.y)
-                   .fillColor('#333333')
-                   .fontSize(10);
-
-                doc.text(order.shippingAddress.fullName);
-                doc.text(order.shippingAddress.addressLine);
-                if (order.shippingAddress.landmark) {
-                    doc.text(`Landmark: ${order.shippingAddress.landmark}`);
-                }
-                doc.text(`${order.shippingAddress.city}, ${order.shippingAddress.state}`);
-                doc.text(`PIN: ${order.shippingAddress.pincode}`);
-                doc.text(`Phone: ${order.shippingAddress.phone}`);
-            }
-            doc.moveDown(2);
-
-            // Table Header
-            const tableTop = doc.y;
-            doc.fontSize(10)
-               .fillColor('#ffffff')
-               .rect(50, tableTop, 495, 25)
-               .fill('#2c5530');
-
-            doc.fillColor('#ffffff')
-               .text('Item', 60, tableTop + 8, { width: 200 })
-               .text('Qty', 270, tableTop + 8, { width: 50, align: 'center' })
-               .text('Price', 330, tableTop + 8, { width: 70, align: 'right' })
-               .text('Total', 410, tableTop + 8, { width: 125, align: 'right' });
-
-            // Table Items
-            let yPosition = tableTop + 35;
-            doc.fillColor('#333333');
-
-            order.items.forEach((item, index) => {
-                const itemName = item.product?.name || 'Product';
-                const quantity = item.quantity;
-                const price = item.price;
-                const total = price * quantity;
-
-                // Calculate row height based on additional details
-                let rowHeight = 25;
-                let additionalLines = 0;
-                
-                if (item.packDetails?.isPack) additionalLines++;
-                if (item.freeProducts?.length > 0) additionalLines += item.freeProducts.length;
-                if (item.bundleDetails?.isBundle) additionalLines++;
-                if (item.offerText) additionalLines++;
-                
-                rowHeight += (additionalLines * 12);
-
-                // Alternate row colors
-                if (index % 2 === 0) {
-                    doc.rect(50, yPosition - 5, 495, rowHeight).fill('#f9f9f9');
-                }
-
-                doc.fillColor('#333333')
-                   .fontSize(9)
-                   .text(itemName, 60, yPosition, { width: 200 })
-                   .text(quantity.toString(), 270, yPosition, { width: 50, align: 'center' })
-                   .text(`₹${price.toFixed(2)}`, 330, yPosition, { width: 70, align: 'right' })
-                   .text(`₹${total.toFixed(2)}`, 410, yPosition, { width: 125, align: 'right' });
-
-                yPosition += 15;
-
-                // Add pack details
-                if (item.packDetails?.isPack) {
-                    doc.fillColor('#2196f3')
-                       .fontSize(7)
-                       .text(`📦 ${item.packDetails.label || `Pack of ${item.packDetails.packSize}`}${item.packDetails.savingsPercent ? ` - Save ${item.packDetails.savingsPercent}%` : ''}`, 60, yPosition, { width: 200 });
-                    yPosition += 12;
-                }
-
-                // Add free products
-                if (item.freeProducts?.length > 0) {
-                    item.freeProducts.forEach(fp => {
-                        doc.fillColor('#4caf50')
-                           .fontSize(7)
-                           .text(`🎁 FREE: ${fp.name} × ${fp.quantity}`, 60, yPosition, { width: 200 });
-                        yPosition += 12;
-                    });
-                }
-
-                // Add bundle details
-                if (item.bundleDetails?.isBundle) {
-                    doc.fillColor('#ff9800')
-                       .fontSize(7)
-                       .text(`🔗 Bundle with ${item.bundleDetails.bundledProductName}${item.bundleDetails.savingsAmount ? ` - Save ₹${item.bundleDetails.savingsAmount}` : ''}`, 60, yPosition, { width: 200 });
-                    yPosition += 12;
-                }
-
-                // Add offer text
-                if (item.offerText) {
-                    doc.fillColor('#e91e63')
-                       .fontSize(7)
-                       .text(`⭐ ${item.offerText}`, 60, yPosition, { width: 200 });
-                    yPosition += 12;
-                }
-
-                yPosition += 10;
-            });
-
-            // Draw line
-            doc.moveTo(50, yPosition)
-               .lineTo(545, yPosition)
-               .stroke('#cccccc');
-
-            yPosition += 10;
-
-            // Subtotal (totalAmount - shipping)
-            const subtotal = order.totalAmount - (order.shippingCost || 0);
-            doc.fontSize(10)
-               .fillColor('#333333')
-               .text('Subtotal:', 370, yPosition)
-               .text(`₹${subtotal.toFixed(2)}`, 410, yPosition, { width: 125, align: 'right' });
-            
-            yPosition += 20;
-
-            // Shipping
-            doc.fillColor(order.shippingCost === 0 ? '#4caf50' : '#333333')
-               .text('Shipping:', 370, yPosition)
-               .text(order.shippingCost > 0 ? `₹${order.shippingCost.toFixed(2)}` : 'FREE', 410, yPosition, { width: 125, align: 'right' });
-            
-            yPosition += 20;
-
-            // Discount
-            if (order.discount && order.discount > 0) {
-                doc.fillColor('#4caf50')
-                   .text('Discount:', 370, yPosition)
-                   .text(`-₹${order.discount.toFixed(2)}`, 410, yPosition, { width: 125, align: 'right' });
-                yPosition += 20;
-            }
-
-            // Total
-            doc.fontSize(12)
-               .fillColor('#2c5530')
-               .text('Total Amount:', 370, yPosition, { bold: true })
-               .text(`₹${order.finalAmount.toFixed(2)}`, 410, yPosition, { width: 125, align: 'right', bold: true });
-
-            yPosition += 30;
-
-            // Payment Info
-            doc.fontSize(9)
-               .fillColor('#666666')
-               .text(`Payment Method: ${order.paymentMethod.toUpperCase()}`, 50, yPosition)
-               .text(`Payment Status: ${order.paymentStatus.toUpperCase()}`, 50, yPosition + 15);
-
-            if (order.razorpayPaymentId) {
-                doc.text(`Transaction ID: ${order.razorpayPaymentId}`, 50, yPosition + 30);
-            }
-
-            // Footer
-            doc.moveDown(3);
-            doc.fontSize(9)
-               .fillColor('#888888')
-               .text('Thank you for your purchase!', 50, 700, { align: 'center' })
-               .text('For any queries, please contact support@ayurvedicstore.com', { align: 'center' })
-               .text('This is a computer-generated invoice and does not require a signature.', { align: 'center' });
+            addHeader(doc);
+            addOrderSummary(doc, order);
+            addCustomerDetails(doc, order);
+            addItemsTable(doc, order);
+            addTotals(doc, order);
+            addFooter(doc);
 
             doc.end();
 
-            stream.on('finish', () => {
-                resolve(filePath);
-            });
-
-            stream.on('error', (err) => {
-                reject(err);
-            });
-
+            stream.on('finish', resolve);
+            stream.on('error', reject);
         } catch (error) {
             reject(error);
         }
     });
-};
 
-module.exports = {
-    generateInvoice
-};
+module.exports = { generateInvoice };
+

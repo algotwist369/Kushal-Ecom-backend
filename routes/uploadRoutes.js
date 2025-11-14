@@ -1,68 +1,121 @@
 const express = require('express');
-const router = express.Router();
-const { protect, admin } = require('../middleware/authMiddleware');
 const {
-    uploadProductImages: uploadProductImagesMiddleware,
-    uploadProductThumbnails: uploadProductThumbnailsMiddleware,
-    uploadPackOptionImages: uploadPackOptionImagesMiddleware,
-    uploadCategoryImages: uploadCategoryImagesMiddleware,
-    uploadUserAvatars: uploadUserAvatarsMiddleware,
-    uploadUserDocuments: uploadUserDocumentsMiddleware,
-    uploadReviewImages: uploadReviewImagesMiddleware,
-    uploadGeneralFiles: uploadGeneralFilesMiddleware,
-    uploadInvoiceFiles: uploadInvoiceFilesMiddleware,
-    uploadExportFiles: uploadExportFilesMiddleware,
-    handleUploadError
-} = require('../middleware/advancedUploadMiddleware');
-const {
-    uploadProductImages: uploadProductImagesController,
-    uploadProductThumbnails: uploadProductThumbnailsController,
-    uploadPackOptionImages: uploadPackOptionImagesController,
-    uploadCategoryImage: uploadCategoryImageController,
-    uploadUserAvatar: uploadUserAvatarController,
-    uploadUserDocuments: uploadUserDocumentsController,
-    uploadSingleImage: uploadSingleImageController,
-    deleteUploadedFile,
-    getFileInfo
+    uploadProductImages,
+    uploadProductThumbnails,
+    uploadCategoryImage,
+    uploadUserAvatar,
+    uploadUserDocuments,
+    uploadPackOptionImages,
+    uploadSingleImage,
+    deleteUploadedFile
 } = require('../controllers/uploadController');
+const { createUploadMiddleware } = require('../middleware/advancedUploadMiddleware');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-// All upload routes require authentication
-router.use(protect);
+const router = express.Router();
 
-// Upload product images (Admin only)
-router.post('/products', admin, uploadProductImagesMiddleware, uploadProductImagesController, handleUploadError);
+const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-// Upload product thumbnails (Admin only)
-router.post('/products/thumbnails', admin, uploadProductThumbnailsMiddleware, uploadProductThumbnailsController, handleUploadError);
+router.post(
+    '/products/gallery',
+    protect,
+    authorize('admin'),
+    createUploadMiddleware({
+        fieldName: 'images',
+        maxCount: 10,
+        subdirectories: ['products', 'gallery'],
+        allowedMimeTypes: IMAGE_MIME_TYPES
+    }),
+    uploadProductImages
+);
 
-// Upload pack option images (Admin only)
-router.post('/products/pack-options', admin, uploadPackOptionImagesMiddleware, uploadPackOptionImagesController, handleUploadError);
+router.post(
+    '/products/thumbnails',
+    protect,
+    authorize('admin'),
+    createUploadMiddleware({
+        fieldName: 'images',
+        maxCount: 5,
+        subdirectories: ['products', 'thumbnails'],
+        allowedMimeTypes: IMAGE_MIME_TYPES
+    }),
+    uploadProductThumbnails
+);
 
-// Upload category image (Admin only)
-router.post('/categories', admin, uploadCategoryImagesMiddleware, uploadCategoryImageController, handleUploadError);
+router.post(
+    '/products/pack-options',
+    protect,
+    authorize('admin'),
+    createUploadMiddleware({
+        fieldName: 'images',
+        maxCount: 5,
+        subdirectories: ['products', 'pack-options'],
+        allowedMimeTypes: IMAGE_MIME_TYPES
+    }),
+    uploadPackOptionImages
+);
 
-// Upload user avatar
-router.post('/users/avatar', uploadUserAvatarsMiddleware, uploadUserAvatarController, handleUploadError);
+router.post(
+    '/categories/icon',
+    protect,
+    authorize('admin'),
+    createUploadMiddleware({
+        fieldName: 'image',
+        maxCount: 1,
+        subdirectories: ['categories', 'icons'],
+        allowedMimeTypes: IMAGE_MIME_TYPES
+    }),
+    uploadCategoryImage
+);
 
-// Upload user documents
-router.post('/users/documents', uploadUserDocumentsMiddleware, uploadUserDocumentsController, handleUploadError);
+router.post(
+    '/users/avatar',
+    protect,
+    createUploadMiddleware({
+        fieldName: 'avatar',
+        maxCount: 1,
+        subdirectories: ['users', 'avatars'],
+        allowedMimeTypes: IMAGE_MIME_TYPES
+    }),
+    uploadUserAvatar
+);
 
-// Upload general files
-router.post('/general', uploadGeneralFilesMiddleware, uploadSingleImageController, handleUploadError);
+router.post(
+    '/users/documents',
+    protect,
+    createUploadMiddleware({
+        fieldName: 'documents',
+        maxCount: 5,
+        subdirectories: ['users', 'documents'],
+        allowedMimeTypes: [...IMAGE_MIME_TYPES, 'application/pdf']
+    }),
+    uploadUserDocuments
+);
 
-// Upload review images (authenticated users - saved to upload/reviewImg folder)
-router.post('/reviews', uploadReviewImagesMiddleware, uploadSingleImageController, handleUploadError);
+router.post(
+    '/reviews',
+    protect,
+    createUploadMiddleware({
+        fieldName: 'images',
+        maxCount: 6,
+        subdirectories: ['reviewImg'],
+        allowedMimeTypes: IMAGE_MIME_TYPES
+    }),
+    uploadSingleImage
+);
 
-// Upload invoice files (Admin only)
-router.post('/invoices', admin, uploadInvoiceFilesMiddleware, uploadSingleImageController, handleUploadError);
+router.post(
+    '/single',
+    protect,
+    createUploadMiddleware({
+        fieldName: 'file',
+        maxCount: 1,
+        subdirectories: ['general'],
+        allowedMimeTypes: [...IMAGE_MIME_TYPES, 'application/pdf']
+    }),
+    uploadSingleImage
+);
 
-// Upload export files (Admin only)
-router.post('/exports', admin, uploadExportFilesMiddleware, uploadSingleImageController, handleUploadError);
-
-// Delete uploaded file
-router.delete('/delete', deleteUploadedFile);
-
-// Get file info - Removed due to Express 5 compatibility issues
-// Use the file management routes instead: GET /v1/api/files/file/:directory/:filename
+router.post('/delete', protect, authorize('admin'), deleteUploadedFile);
 
 module.exports = router;

@@ -7,20 +7,19 @@ const {
     updateOrderStatus,
     cancelOrder,
     deleteOrder
-} = require('../controllers/orderController.js');
-const { protect, admin } = require('../middleware/authMiddleware.js');
+} = require('../controllers/orderController');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// User
 router.post('/', protect, createOrder);
 router.get('/my-orders', protect, getUserOrders);
-router.put('/:id/cancel', protect, cancelOrder);
 
-// Admin
-router.get('/', protect, admin, getAllOrders);
-router.get('/:id', protect, admin, getOrderById);
-router.put('/:id/status', protect, admin, updateOrderStatus);
-router.delete('/:id', protect, admin, deleteOrder);
+router.get('/', protect, authorize('admin'), getAllOrders);
+router.put('/:id/status', protect, authorize('admin'), updateOrderStatus);
+router.delete('/:id', protect, authorize('admin'), deleteOrder);
+
+router.put('/:id/cancel', protect, cancelOrder);
+router.get('/:id', protect, authorize('admin'), getOrderById);
 
 module.exports = router;

@@ -1,100 +1,77 @@
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const Order = require('../models/Order');
 
-// Advanced search functionality
-const searchProducts = async (searchParams) => {
-    const {
-        query,
-        category,
-        minPrice,
-        maxPrice,
-        rating,
-        ingredients,
-        benefits,
-        formulation,
-        ageGroup,
-        gender,
-        season,
-        timeOfDay,
-        sortBy = 'createdAt',
-        sortOrder = 'desc',
-        page = 1,
-        limit = 12
-    } = searchParams;
+const buildSearchFilter = (params = {}) => {
+    const filter = { isActive: true };
 
-    // Build filter object
-    let filter = { isActive: true };
-
-    // Text search
-    if (query) {
+    if (params.query) {
+        const safeQuery = params.query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         filter.$or = [
-            { name: { $regex: query, $options: 'i' } },
-            { description: { $regex: query, $options: 'i' } },
-            { 'ingredients.name': { $regex: query, $options: 'i' } },
-            { 'benefits.name': { $regex: query, $options: 'i' } },
-            { keywords: { $in: [new RegExp(query, 'i')] } },
-            { manufacturer: { $regex: query, $options: 'i' } },
-            { origin: { $regex: query, $options: 'i' } },
-            { processingMethod: { $regex: query, $options: 'i' } },
-            { potency: { $regex: query, $options: 'i' } },
-            { formulation: { $regex: query, $options: 'i' } }
+            { name: { $regex: safeQuery, $options: 'i' } },
+            { description: { $regex: safeQuery, $options: 'i' } },
+            { ingredients: { $regex: safeQuery, $options: 'i' } },
+            { benefits: { $regex: safeQuery, $options: 'i' } }
         ];
     }
 
-    // Category filter
-    if (category) {
-        filter.category = category;
+    if (params.category && mongoose.Types.ObjectId.isValid(params.category)) {
+        filter.category = params.category;
     }
 
-    // Price range filter
-    if (minPrice || maxPrice) {
+    if (params.minPrice || params.maxPrice) {
         filter.price = {};
-        if (minPrice) filter.price.$gte = Number(minPrice);
-        if (maxPrice) filter.price.$lte = Number(maxPrice);
+        if (params.minPrice) filter.price.$gte = Number(params.minPrice);
+        if (params.maxPrice) filter.price.$lte = Number(params.maxPrice);
     }
 
-    // Rating filter
-    if (rating) {
-        filter.averageRating = { $gte: Number(rating) };
+    if (params.rating) {
+        filter.averageRating = { $gte: Number(params.rating) };
     }
 
-    // Ayurvedic-specific filters
-    if (ingredients && ingredients.length > 0) {
-        filter['ingredients.name'] = { $in: ingredients };
+    const multiValueFilters = [
+        { key: 'ingredients', field: 'ingredients' },
+        { key: 'benefits', field: 'benefits' },
+        { key: 'formulation', field: 'formulation' },
+        { key: 'ageGroup', field: 'ageGroup' },
+        { key: 'gender', field: 'gender' },
+        { key: 'season', field: 'season' },
+        { key: 'timeOfDay', field: 'timeOfDay' }
+    ];
+
+    multiValueFilters.forEach(({ key, field }) => {
+        if (params[key] && params[key].length) {
+            filter[field] = { $in: params[key] };
+        }
+    });
+
+    return filter;
+};
+
+const buildSort = (sortBy = 'createdAt', sortOrder = 'desc') => {
+    const direction = sortOrder === 'asc' ? 1 : -1;
+
+    switch (sortBy) {
+        case 'price':
+            return { price: direction };
+        case 'rating':
+            return { averageRating: direction, numReviews: direction };
+        case 'stock':
+            return { stock: direction };
+        default:
+            return { createdAt: direction };
     }
+};
 
-    if (benefits && benefits.length > 0) {
-        filter['benefits.name'] = { $in: benefits };
-    }
-
-    if (formulation) {
-        filter.formulation = formulation;
-    }
-
-    if (ageGroup && ageGroup.length > 0) {
-        filter.ageGroup = { $in: ageGroup };
-    }
-
-    if (gender && gender.length > 0) {
-        filter.gender = { $in: gender };
-    }
-
-    if (season && season.length > 0) {
-        filter.season = { $in: season };
-    }
-
-    if (timeOfDay && timeOfDay.length > 0) {
-        filter.timeOfDay = { $in: timeOfDay };
-    }
-
-    // Build sort object
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
-    // Calculate pagination
+const searchProducts = async (params = {}) => {
+    const page = Math.max(1, params.page || 1);
+    const limit = Math.min(48, params.limit || 12);
     const skip = (page - 1) * limit;
 
-    // Execute query
+    const filter = buildSearchFilter(params);
+    const sort = buildSort(params.sortBy, params.sortOrder);
+
     const [products, total] = await Promise.all([
         Product.find(filter)
             .populate('category', 'name slug')
@@ -110,60 +87,46 @@ const searchProducts = async (searchParams) => {
         total,
         page,
         pages: Math.ceil(total / limit),
-        hasNextPage: page < Math.ceil(total / limit),
-        hasPrevPage: page > 1
+        limit
     };
 };
 
-// Get search suggestions
-const getSearchSuggestions = async (query, limit = 10) => {
-    if (!query || query.length < 2) return [];
+const getSearchSuggestions = async (query) => {
+    if (!query) {
+        return [];
+    }
 
-    const suggestions = await Product.aggregate([
-        {
-            $match: {
-                isActive: true,
-                $or: [
-                    { name: { $regex: query, $options: 'i' } },
-                    { 'ingredients.name': { $regex: query, $options: 'i' } },
-                    { 'benefits.name': { $regex: query, $options: 'i' } },
-                    { manufacturer: { $regex: query, $options: 'i' } },
-                    { formulation: { $regex: query, $options: 'i' } }
-                ]
-            }
-        },
-        {
-            $project: {
-                name: 1,
-                slug: 1,
-                price: 1,
-                images: { $slice: ['$images', 1] },
-                category: 1
-            }
-        },
-        { $limit: limit }
+    const safeQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const [productNames, categoryNames] = await Promise.all([
+        Product.find(
+            { name: { $regex: safeQuery, $options: 'i' }, isActive: true },
+            { name: 1, slug: 1 }
+        )
+            .limit(5)
+            .lean(),
+        Category.find({ name: { $regex: safeQuery, $options: 'i' }, isActive: true }, { name: 1, slug: 1 })
+            .limit(5)
+            .lean()
     ]);
 
-    return suggestions;
+    return [
+        ...productNames.map((product) => ({
+            type: 'product',
+            label: product.name,
+            value: product.slug || product._id
+        })),
+        ...categoryNames.map((category) => ({
+            type: 'category',
+            label: category.name,
+            value: category.slug || category._id
+        }))
+    ];
 };
 
-// Get filter options for search
 const getFilterOptions = async () => {
-    const [
-        categories,
-        formulations,
-        ageGroups,
-        genders,
-        seasons,
-        timeOfDays,
-        priceRange
-    ] = await Promise.all([
-        Category.find({ isActive: true }).select('name slug'),
-        Product.distinct('formulation', { isActive: true }),
-        Product.distinct('ageGroup', { isActive: true }),
-        Product.distinct('gender', { isActive: true }),
-        Product.distinct('season', { isActive: true }),
-        Product.distinct('timeOfDay', { isActive: true }),
+    const [categories, priceRange, attributes] = await Promise.all([
+        Category.find({ isActive: true }).sort({ name: 1 }).lean(),
         Product.aggregate([
             { $match: { isActive: true } },
             {
@@ -173,53 +136,106 @@ const getFilterOptions = async () => {
                     maxPrice: { $max: '$price' }
                 }
             }
+        ]),
+        Product.aggregate([
+            { $match: { isActive: true } },
+            {
+                $group: {
+                    _id: null,
+                    ingredients: { $addToSet: '$ingredients' },
+                    benefits: { $addToSet: '$benefits' },
+                    formulation: { $addToSet: '$formulation' },
+                    ageGroup: { $addToSet: '$ageGroup' },
+                    gender: { $addToSet: '$gender' }
+                }
+            }
         ])
     ]);
 
+    const priceStats = priceRange[0] || { minPrice: 0, maxPrice: 0 };
+    const attributeStats = attributes[0] || {};
+
+    const normalize = (value) => {
+        if (!value) return [];
+        if (Array.isArray(value)) {
+            return [...new Set(value.flat().filter(Boolean))];
+        }
+        return [value];
+    };
+
     return {
-        categories,
-        formulations,
-        ageGroups,
-        genders,
-        seasons,
-        timeOfDays,
-        priceRange: priceRange[0] || { minPrice: 0, maxPrice: 0 }
+        categories: categories.map((category) => ({
+            id: category._id,
+            name: category.name,
+            slug: category.slug
+        })),
+        price: {
+            min: priceStats.minPrice || 0,
+            max: priceStats.maxPrice || 0
+        },
+        attributes: {
+            ingredients: normalize(attributeStats.ingredients),
+            benefits: normalize(attributeStats.benefits),
+            formulation: normalize(attributeStats.formulation),
+            ageGroup: normalize(attributeStats.ageGroup),
+            gender: normalize(attributeStats.gender)
+        }
     };
 };
 
-// Get trending products
 const getTrendingProducts = async (limit = 8) => {
-    return await Product.find({ isActive: true })
-        .sort({ averageRating: -1, numReviews: -1 })
-        .limit(limit)
+    const [topSold, topReviewed] = await Promise.all([
+        Order.aggregate([
+            { $match: { paymentStatus: 'paid' } },
+            { $unwind: '$items' },
+            {
+                $group: {
+                    _id: '$items.product',
+                    totalSold: { $sum: '$items.quantity' }
+                }
+            },
+            { $sort: { totalSold: -1 } },
+            { $limit: limit }
+        ]),
+        Product.find({ isActive: true })
+            .sort({ numReviews: -1, averageRating: -1 })
+            .limit(limit)
+            .select('_id')
+            .lean()
+    ]);
+
+    const trendingIds = new Set();
+    topSold.forEach((item) => trendingIds.add(item._id?.toString()));
+    topReviewed.forEach((item) => trendingIds.add(item._id?.toString()));
+
+    const ids = Array.from(trendingIds)
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+    return Product.find({ _id: { $in: ids }, isActive: true })
         .populate('category', 'name slug')
-        .select('name slug price images averageRating numReviews')
         .lean();
 };
 
-// Get related products
 const getRelatedProducts = async (productId, limit = 4) => {
-    const product = await Product.findById(productId).select('category ingredients benefits formulation ageGroup gender');
-    if (!product) return [];
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+        return [];
+    }
 
-    const relatedProducts = await Product.find({
-        _id: { $ne: productId },
-        isActive: true,
-        $or: [
-            { category: product.category },
-            { 'ingredients.name': { $in: product.ingredients.map(i => i.name) } },
-            { 'benefits.name': { $in: product.benefits.map(b => b.name) } },
-            { formulation: product.formulation },
-            { ageGroup: { $in: product.ageGroup } },
-            { gender: { $in: product.gender } }
-        ]
+    const product = await Product.findById(productId).lean();
+    if (!product) {
+        return [];
+    }
+
+    return Product.find({
+        _id: { $ne: product._id },
+        category: product.category,
+        isActive: true
     })
+        .sort({ averageRating: -1, numReviews: -1 })
         .limit(limit)
         .populate('category', 'name slug')
-        .select('name slug price images averageRating')
         .lean();
-
-    return relatedProducts;
 };
 
 module.exports = {
@@ -229,3 +245,4 @@ module.exports = {
     getTrendingProducts,
     getRelatedProducts
 };
+

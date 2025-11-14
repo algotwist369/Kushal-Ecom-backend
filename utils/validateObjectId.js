@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
 
-const validateObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+const validateObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
+
 module.exports = validateObjectId;
+

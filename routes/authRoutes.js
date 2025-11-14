@@ -1,34 +1,34 @@
 const express = require('express');
 const {
-  registerUser,
-  loginUser,
-  logoutUser,
-  getUserProfile,
-  updateUserProfile,
-  changePassword,
-  getUsers,
-  deleteUser,
-  getUserById,
-  updateUser
-} = require('../controllers/authController.js');
-const { protect, admin } = require('../middleware/authMiddleware.js');
+    registerUser,
+    loginUser,
+    logoutUser,
+    getUserProfile,
+    updateUserProfile,
+    changePassword,
+    getUsers,
+    deleteUser,
+    getUserById,
+    updateUser
+} = require('../controllers/authController');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// Public
+// Public auth routes
 router.post('/register', registerUser);
 router.post('/login', loginUser);
-router.post('/logout', protect, logoutUser);
 
-// Private
+// Authenticated routes
 router.get('/profile', protect, getUserProfile);
 router.put('/profile', protect, updateUserProfile);
 router.put('/change-password', protect, changePassword);
+router.post('/logout', protect, logoutUser);
 
-// Admin
-router.get('/', protect, admin, getUsers);
-router.get('/:id', protect, admin, getUserById);
-router.put('/:id', protect, admin, updateUser);
-router.delete('/:id', protect, admin, deleteUser);
+// Admin routes
+router.get('/', protect, authorize('admin'), getUsers);
+router.get('/:id', protect, authorize('admin'), getUserById);
+router.put('/:id', protect, authorize('admin'), updateUser);
+router.delete('/:id', protect, authorize('admin'), deleteUser);
 
 module.exports = router;

@@ -1,118 +1,145 @@
 const mongoose = require('mongoose');
 
-const orderSchema = new mongoose.Schema({
-    user: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true,
-        index: true
+const freeProductSchema = new mongoose.Schema(
+    {
+        product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+        quantity: { type: Number, default: 1 },
+        name: String
     },
-    items: [
-        {
-            product: {
-                type: mongoose.Schema.Types.ObjectId,
-                ref: 'Product',
-                required: true
-            },
-            quantity: Number,
-            price: Number,
-            // Pack details if purchased as pack
-            packDetails: {
-                isPack: {
-                    type: Boolean,
-                    default: false
-                },
-                packSize: Number,
-                packPrice: Number,
-                savingsPercent: Number,
-                label: String
-            },
-            // Free products with this purchase
-            freeProducts: [{
-                product: {
-                    type: mongoose.Schema.Types.ObjectId,
-                    ref: 'Product'
-                },
-                quantity: Number,
-                name: String // Store name for history
-            }],
-            // Bundle details if part of bundle
-            bundleDetails: {
-                isBundle: {
-                    type: Boolean,
-                    default: false
-                },
-                bundledWith: {
-                    type: mongoose.Schema.Types.ObjectId,
-                    ref: 'Product'
-                },
-                bundlePrice: Number,
-                savingsAmount: Number,
-                bundledProductName: String // Store for history
-            },
-            // Special offer text
-            offerText: String
-        }
-    ],
-    totalAmount: {
-        type: Number,
-        required: true
+    { _id: false }
+);
+
+const packDetailsSchema = new mongoose.Schema(
+    {
+        isPack: Boolean,
+        packSize: Number,
+        packPrice: Number,
+        savingsPercent: Number,
+        label: String
     },
-    shippingCost: {
-        type: Number,
-        default: 49
+    { _id: false }
+);
+
+const bundleDetailsSchema = new mongoose.Schema(
+    {
+        isBundle: Boolean,
+        bundledWith: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+        bundlePrice: Number,
+        savingsAmount: Number,
+        bundledProductName: String
     },
-    discount: {
-        type: Number,
-        default: 0
+    { _id: false }
+);
+
+const orderItemSchema = new mongoose.Schema(
+    {
+        product: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Product',
+            required: true
+        },
+        quantity: {
+            type: Number,
+            required: true,
+            min: 1
+        },
+        price: {
+            type: Number,
+            required: true,
+            min: 0
+        },
+        offerText: String,
+        packDetails: packDetailsSchema,
+        freeProducts: {
+            type: [freeProductSchema],
+            default: []
+        },
+        bundleDetails: bundleDetailsSchema
     },
-    finalAmount: {
-        type: Number,
-        required: true
-    },
-    coupon: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Coupon'
-    },
-    paymentMethod: {
-        type: String,
-        enum: ['razorpay', 'cod'],
-        required: true,
-        index: true
-    },
-    paymentStatus: {
-        type: String,
-        enum: ['pending', 'paid', 'failed'],
-        default: 'pending'
-    },
-    razorpayPaymentId: String,
-    orderStatus: {
-        type: String,
-        enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
-        default: 'pending'
-    },
-    shippingAddress: {
+    { _id: false }
+);
+
+const shippingAddressSchema = new mongoose.Schema(
+    {
         fullName: String,
         phone: String,
         email: String,
-        pincode: String,
+        addressLine: String,
+        landmark: String,
         city: String,
         state: String,
-        addressLine: String,
-        landmark: String
+        pincode: String
     },
-    cancellationReason: {
-        type: String,
-        default: null
-    },
-    cancelledAt: {
-        type: Date,
-        default: null
-    },
-    invoicePath: String // local invoice PDF path
-}, { timestamps: true });
+    { _id: false }
+);
 
-// Compound index for user & order status
-orderSchema.index({ user: 1, orderStatus: 1 });
+const orderSchema = new mongoose.Schema(
+    {
+        user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            required: true
+        },
+        items: {
+            type: [orderItemSchema],
+            default: []
+        },
+        totalAmount: {
+            type: Number,
+            required: true,
+            min: 0
+        },
+        shippingCost: {
+            type: Number,
+            default: 0
+        },
+        discount: {
+            type: Number,
+            default: 0
+        },
+        finalAmount: {
+            type: Number,
+            required: true,
+            min: 0
+        },
+        paymentMethod: {
+            type: String,
+            enum: ['cod', 'razorpay', 'stripe', 'manual'],
+            default: 'cod'
+        },
+        paymentStatus: {
+            type: String,
+            enum: ['pending', 'paid', 'failed', 'refunded'],
+            default: 'pending'
+        },
+        orderStatus: {
+            type: String,
+            enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
+            default: 'pending'
+        },
+        coupon: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Coupon'
+        },
+        shippingAddress: shippingAddressSchema,
+        notes: String,
+        razorpayPaymentId: String,
+        invoiceUrl: String,
+        invoicePath: String,
+        cancellationReason: String,
+        cancelledAt: Date,
+        deliveredAt: Date,
+        meta: {
+            type: Map,
+            of: mongoose.Schema.Types.Mixed,
+            default: {}
+        }
+    },
+    { timestamps: true }
+);
+
+orderSchema.index({ user: 1, createdAt: -1 });
+orderSchema.index({ orderStatus: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);
+

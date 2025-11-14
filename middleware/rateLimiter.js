@@ -1,45 +1,38 @@
 const rateLimit = require('express-rate-limit');
 
-// Determine if we're in development mode
-const isDevelopment = process.env.NODE_ENV === 'development';
+const buildLimiter = ({ windowMs, max, message, skipSuccessfulRequests = false }) =>
+    rateLimit({
+        windowMs,
+        max,
+        standardHeaders: true,
+        legacyHeaders: false,
+        skipSuccessfulRequests,
+        handler: (req, res, _next, options) => {
+            res.status(options.statusCode || 429).json({
+                message:
+                    message ||
+                    'Too many requests from this IP, please try again after a short break.',
+                retryAfter: Math.ceil((options.windowMs || windowMs) / 1000)
+            });
+        }
+    });
 
-// General rate limiter
-const generalLimiter = rateLimit({
+const generalLimiter = buildLimiter({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: isDevelopment ? 1000 : 100, // Much higher limit in development
-    message: {
-        error: 'Too many requests from this IP, please try again later.',
-        retryAfter: '15 minutes'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: () => isDevelopment && process.env.DISABLE_RATE_LIMIT === 'true', // Can disable completely in dev
+    max: parseInt(process.env.RATE_LIMIT_GENERAL_MAX, 10) || 500
 });
 
-// Auth rate limiter (stricter for login/register)
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: isDevelopment ? 100 : 5, // More lenient in development
-    message: {
-        error: 'Too many authentication attempts, please try again later.',
-        retryAfter: '15 minutes'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: () => isDevelopment && process.env.DISABLE_RATE_LIMIT === 'true',
+const authLimiter = buildLimiter({
+    windowMs: 10 * 60 * 1000, // 10 minutes
+    max: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 50,
+    skipSuccessfulRequests: true,
+    message: 'Too many login attempts. Please try again in a few minutes.'
 });
 
-// Payment rate limiter (very strict)
-const paymentLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: isDevelopment ? 50 : 3, // More lenient in development
-    message: {
-        error: 'Too many payment attempts, please try again later.',
-        retryAfter: '15 minutes'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: () => isDevelopment && process.env.DISABLE_RATE_LIMIT === 'true',
+const paymentLimiter = buildLimiter({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: parseInt(process.env.RATE_LIMIT_PAYMENT_MAX, 10) || 20,
+    message: 'Payment attempts rate limit exceeded. Please wait before retrying.'
 });
 
 module.exports = {
@@ -47,3 +40,4 @@ module.exports = {
     authLimiter,
     paymentLimiter
 };
+

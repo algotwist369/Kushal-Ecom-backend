@@ -7,22 +7,22 @@ const {
     deleteContact,
     getContactStats
 } = require('../controllers/contactController');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { rateLimit } = require('express-rate-limit');
 
 const router = express.Router();
 
-// Public route - submit contact form
-router.post('/submit', submitContactForm);
+const contactLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20
+});
 
-// Admin routes - protected
-router.get('/stats', protect, admin, getContactStats);
-router.route('/')
-    .get(protect, admin, getAllContacts);
+router.post('/submit', contactLimiter, submitContactForm);
 
-router.route('/:id')
-    .get(protect, admin, getContactById)
-    .put(protect, admin, updateContact)
-    .delete(protect, admin, deleteContact);
+router.get('/stats', protect, authorize('admin'), getContactStats);
+router.get('/', protect, authorize('admin'), getAllContacts);
+router.get('/:id', protect, authorize('admin'), getContactById);
+router.put('/:id', protect, authorize('admin'), updateContact);
+router.delete('/:id', protect, authorize('admin'), deleteContact);
 
 module.exports = router;
-

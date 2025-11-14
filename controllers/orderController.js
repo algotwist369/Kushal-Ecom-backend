@@ -7,6 +7,7 @@ const Notification = require('../models/Notification');
 const { handleAsync } = require('../utils/handleAsync');
 const { clearCart } = require('./cartController');
 const sendEmail = require('../utils/sendEmail');
+const { getCartProductPopulateConfig, PRODUCT_CART_SELECT_FIELDS } = require('../utils/productPopulate');
 
 // Place Order
 const createOrder = handleAsync(async (req, res) => {
@@ -23,10 +24,7 @@ const createOrder = handleAsync(async (req, res) => {
         return res.status(400).json({ message: 'Payment method is required' });
     }
     
-    const cart = await Cart.findOne({ user: req.user._id }).populate({
-        path: 'items.product',
-        select: 'name price discountPrice stock freeShipping shippingCost minOrderForFreeShipping packOptions freeProducts bundleWith offerText'
-    });
+    const cart = await Cart.findOne({ user: req.user._id }).populate(getCartProductPopulateConfig());
     if (!cart || cart.items.length === 0) {
         return res.status(400).json({ message: 'Cart is empty' });
     }
@@ -84,24 +82,61 @@ const createOrder = handleAsync(async (req, res) => {
     let discount = 0;
     let finalAmount = totalAmount;
     let couponId = null;
+    let appliedCouponDoc = null;
 
-    // Apply coupon if exists
     if (coupon && coupon.code) {
-        // Look up the coupon in database by code
         const Coupon = require('../models/Coupon');
-        const couponDoc = await Coupon.findOne({ 
+        const couponDoc = await Coupon.findOne({
             code: coupon.code.toUpperCase(),
-            isActive: true,
-            expiresAt: { $gt: new Date() }
-        });
-        
-        if (couponDoc) {
-            couponId = couponDoc._id;
-            discount = coupon.discountAmount || 0;
-            finalAmount = totalAmount - discount;
-            console.log('✅ Coupon applied:', coupon.code, 'Discount:', discount);
+            isActive: true
+        }).populate('applicableProducts', '_id').populate('applicableCategories', '_id');
+
+        if (!couponDoc) {
+            console.log('⚠️ Coupon not found or inactive:', coupon.code);
+        } else if (!couponDoc.isValid()) {
+            console.log('⚠️ Coupon expired or usage limit reached:', coupon.code);
         } else {
-            console.log('⚠️ Coupon not found or expired:', coupon.code);
+            const phoneNumber = shippingAddress?.phone;
+            if (phoneNumber && !couponDoc.canUserClaim(phoneNumber)) {
+                console.log('⚠️ Coupon per-user limit reached for phone:', phoneNumber);
+            } else {
+                const cartProductIds = cart.items
+                    .map(item => item.product?._id)
+                    .filter(Boolean)
+                    .map(id => id.toString());
+                const cartCategoryIds = cart.items
+                    .map(item => item.product?.category?._id || item.product?.category)
+                    .filter(Boolean)
+                    .map(id => id.toString());
+
+                if (
+                    couponDoc.applicableProducts.length > 0 &&
+                    !cartProductIds.some(id =>
+                        couponDoc.applicableProducts.some(pId => pId._id
+                            ? pId._id.toString() === id
+                            : pId.toString() === id)
+                    )
+                ) {
+                    console.log('⚠️ Coupon not applicable to cart products:', coupon.code);
+                } else if (
+                    couponDoc.applicableCategories.length > 0 &&
+                    !cartCategoryIds.some(id =>
+                        couponDoc.applicableCategories.some(cId => cId._id
+                            ? cId._id.toString() === id
+                            : cId.toString() === id)
+                    )
+                ) {
+                    console.log('⚠️ Coupon not applicable to cart categories:', coupon.code);
+                } else if (subtotal < couponDoc.minPurchaseAmount) {
+                    console.log('⚠️ Coupon minimum purchase not met:', coupon.code, 'Subtotal:', subtotal);
+                } else {
+                    couponId = couponDoc._id;
+                    discount = couponDoc.calculateDiscount(subtotal);
+                    finalAmount = Math.max(subtotal - discount + shipping, 0);
+                    appliedCouponDoc = couponDoc;
+                    console.log('✅ Coupon applied:', coupon.code, 'Discount:', discount);
+                }
+            }
         }
     }
 
@@ -206,6 +241,25 @@ const createOrder = handleAsync(async (req, res) => {
 
     const order = await Order.create(orderData);
 
+    if (appliedCouponDoc) {
+        appliedCouponDoc.usageCount = (appliedCouponDoc.usageCount || 0) + 1;
+        const phoneNumber = shippingAddress?.phone;
+        if (phoneNumber) {
+            const claim = appliedCouponDoc.claimedBy?.find(entry => entry.phoneNumber === phoneNumber);
+            if (claim) {
+                claim.usedCount = (claim.usedCount || 0) + 1;
+            } else {
+                appliedCouponDoc.claimedBy = appliedCouponDoc.claimedBy || [];
+                appliedCouponDoc.claimedBy.push({
+                    phoneNumber,
+                    claimedAt: new Date(),
+                    usedCount: 1
+                });
+            }
+        }
+        await appliedCouponDoc.save();
+    }
+
     // Reduce stock for all items
     for (const item of cart.items) {
         await Product.findByIdAndUpdate(item.product._id, { 
@@ -227,7 +281,10 @@ const createOrder = handleAsync(async (req, res) => {
             const { adminNewOrderNotificationTemplate } = require('../utils/emailTemplates');
             
             // Populate order with product details for email
-            const populatedOrder = await Order.findById(order._id).populate('items.product');
+            const populatedOrder = await Order.findById(order._id).populate({
+                path: 'items.product',
+                select: PRODUCT_CART_SELECT_FIELDS
+            });
             const user = await User.findById(req.user._id);
             
             const emailSubject = `🛒 New Order #${order._id.toString().slice(-8).toUpperCase()} - Action Required`;
@@ -255,7 +312,7 @@ const getUserOrders = handleAsync(async (req, res) => {
     const orders = await Order.find({ user: req.user._id })
         .populate({
             path: 'items.product',
-            select: 'name images price discountPrice slug'
+            select: PRODUCT_CART_SELECT_FIELDS
         })
         .populate('coupon', 'code discountType discountValue')
         .sort({ createdAt: -1 });
@@ -267,7 +324,10 @@ const getUserOrders = handleAsync(async (req, res) => {
 const getAllOrders = handleAsync(async (req, res) => {
     const orders = await Order.find()
         .populate('user', 'name email phone')
-        .populate('items.product', 'name images price')
+        .populate({
+            path: 'items.product',
+            select: PRODUCT_CART_SELECT_FIELDS
+        })
         .sort({ createdAt: -1 });
     res.json(orders);
 });
@@ -276,7 +336,10 @@ const getAllOrders = handleAsync(async (req, res) => {
 const getOrderById = handleAsync(async (req, res) => {
     const order = await Order.findById(req.params.id)
         .populate('user', 'name email phone')
-        .populate('items.product', 'name images price description')
+        .populate({
+            path: 'items.product',
+            select: PRODUCT_CART_SELECT_FIELDS
+        })
         .populate('coupon', 'code discountValue discountType');
     
     if (!order) {
@@ -296,7 +359,10 @@ const updateOrderStatus = handleAsync(async (req, res) => {
         return res.status(400).json({ message: 'Invalid order status' });
     }
     
-    const order = await Order.findById(req.params.id).populate('items.product');
+    const order = await Order.findById(req.params.id).populate({
+        path: 'items.product',
+        select: PRODUCT_CART_SELECT_FIELDS
+    });
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
     // Store old status to check if it changed
@@ -337,7 +403,10 @@ const updateOrderStatus = handleAsync(async (req, res) => {
             // Populate order with all required data for email
             const populatedOrder = await Order.findById(order._id)
                 .populate('user', 'name email phone')
-                .populate('items.product', 'name price discountPrice');
+                .populate({
+                    path: 'items.product',
+                    select: PRODUCT_CART_SELECT_FIELDS
+                });
             
             if (!populatedOrder || !populatedOrder.user || !populatedOrder.user.email) {
                 console.log(`⚠️ Cannot send email - user or email not found for order ${order._id}`);
@@ -400,7 +469,10 @@ const cancelOrder = handleAsync(async (req, res) => {
         return res.status(400).json({ message: 'Cancellation reason is required' });
     }
     
-    const order = await Order.findById(req.params.id).populate('items.product');
+    const order = await Order.findById(req.params.id).populate({
+        path: 'items.product',
+        select: PRODUCT_CART_SELECT_FIELDS
+    });
     
     if (!order) {
         return res.status(404).json({ message: 'Order not found' });
@@ -507,7 +579,10 @@ const cancelOrder = handleAsync(async (req, res) => {
 
 // Delete Order (Admin - Hard Delete)
 const deleteOrder = handleAsync(async (req, res) => {
-    const order = await Order.findById(req.params.id).populate('items.product');
+    const order = await Order.findById(req.params.id).populate({
+        path: 'items.product',
+        select: PRODUCT_CART_SELECT_FIELDS
+    });
     
     if (!order) {
         return res.status(404).json({ message: 'Order not found' });

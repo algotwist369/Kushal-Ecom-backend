@@ -1,49 +1,49 @@
 const mongoose = require('mongoose');
 
-const notificationSchema = new mongoose.Schema({
-    type: {
-        type: String,
-        enum: ['new_user', 'new_product', 'order_cancelled', 'order_placed', 'order_update', 'system'],
-        required: true
+const notificationSchema = new mongoose.Schema(
+    {
+        type: {
+            type: String,
+            default: 'general'
+        },
+        title: {
+            type: String,
+            required: true
+        },
+        message: {
+            type: String,
+            required: true
+        },
+        relatedUser: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        },
+        relatedProduct: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Product'
+        },
+        relatedOrder: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Order'
+        },
+        metadata: {
+            type: Map,
+            of: mongoose.Schema.Types.Mixed,
+            default: {}
+        },
+        isRead: {
+            type: Boolean,
+            default: false
+        },
+        readBy: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User'
+            }
+        ]
     },
-    title: {
-        type: String,
-        required: true
-    },
-    message: {
-        type: String,
-        required: true
-    },
-    relatedUser: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
-    relatedProduct: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Product'
-    },
-    relatedOrder: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Order'
-    },
-    isRead: {
-        type: Boolean,
-        default: false
-    },
-    readBy: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    }],
-    metadata: {
-        type: mongoose.Schema.Types.Mixed
-    }
-}, {
-    timestamps: true
-});
-
-// Index for faster queries
-notificationSchema.index({ type: 1, createdAt: -1 });
-notificationSchema.index({ isRead: 1 });
+    { timestamps: true }
+);
 
 module.exports = mongoose.model('Notification', notificationSchema);
 

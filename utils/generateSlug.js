@@ -1,31 +1,47 @@
-const generateSlug = (text) => {
-    return text
-        .toLowerCase()
-        .trim()
-        .replace(/[^\w\s-]/g, '') // Remove special characters
-        .replace(/[\s_-]+/g, '-') // Replace spaces and underscores with hyphens
-        .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+const crypto = require('crypto');
+
+const slugify = (value) => {
+    return value
+        .toString()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toLowerCase();
 };
 
-const generateUniqueSlug = async (Model, text, excludeId = null) => {
-    let baseSlug = generateSlug(text);
+const buildUniqueSlug = async (model, value, documentId) => {
+    let baseSlug = slugify(value);
+    if (!baseSlug) {
+        baseSlug = crypto.randomBytes(4).toString('hex');
+    }
+
     let slug = baseSlug;
     let counter = 1;
 
-    while (true) {
-        const query = { slug };
-        if (excludeId) {
-            query._id = { $ne: excludeId };
-        }
-        
-        const existing = await Model.findOne(query);
-        if (!existing) {
-            return slug;
-        }
-        
-        slug = `${baseSlug}-${counter}`;
-        counter++;
+    while (await slugExists(model, slug, documentId)) {
+        slug = `${baseSlug}-${counter++}`;
     }
+
+    return slug;
 };
 
-module.exports = { generateSlug, generateUniqueSlug };
+const slugExists = async (model, slug, documentId) => {
+    if (!model) {
+        return false;
+    }
+
+    const query = { slug };
+    if (documentId) {
+        query._id = { $ne: documentId };
+    }
+
+    const existing = await model.findOne(query).select('_id');
+    return Boolean(existing);
+};
+
+module.exports = {
+    slugify,
+    buildUniqueSlug
+};
+
