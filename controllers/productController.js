@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const User = require('../models/User');
@@ -172,7 +173,7 @@ const getAllProductsByFilter = handleAsync(async (req, res) => {
         pages: Math.ceil(total / limit),
         chunkSize,
         chunks,
-        products // flat array as well
+        products  
     });
 });
 
@@ -192,6 +193,46 @@ const createProduct = handleAsync(async (req, res) => {
         // Shipping Options
         freeShipping, shippingCost, minOrderForFreeShipping
     } = productData;
+
+    // Validate required fields
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+        return res.status(400).json({ message: 'Product name is required' });
+    }
+
+    if (price === undefined || price === null || isNaN(Number(price)) || Number(price) < 0) {
+        return res.status(400).json({ message: 'Valid product price is required' });
+    }
+
+    // Validate category if provided
+    if (category) {
+        if (!validateObjectId(category)) {
+            return res.status(400).json({ message: 'Invalid category ID' });
+        }
+        const Category = require('../models/Category');
+        const categoryExists = await Category.findById(category);
+        if (!categoryExists) {
+            return res.status(400).json({ message: 'Category not found' });
+        }
+    }
+
+    // Validate discountPrice if provided
+    if (discountPrice !== undefined && discountPrice !== null) {
+        const discountPriceNum = Number(discountPrice);
+        if (isNaN(discountPriceNum) || discountPriceNum < 0) {
+            return res.status(400).json({ message: 'Invalid discount price' });
+        }
+        if (discountPriceNum >= Number(price)) {
+            return res.status(400).json({ message: 'Discount price must be less than regular price' });
+        }
+    }
+
+    // Validate stock if provided
+    if (stock !== undefined && stock !== null) {
+        const stockNum = Number(stock);
+        if (isNaN(stockNum) || stockNum < 0) {
+            return res.status(400).json({ message: 'Invalid stock quantity' });
+        }
+    }
 
     const product = new Product({
         name,
@@ -346,20 +387,50 @@ const getProducts = handleAsync(async (req, res) => {
 const getAllProductsAdmin = handleAsync(async (req, res) => {
     let { page, limit, category, minPrice, maxPrice, sortBy, search, status, stock } = req.query;
 
+    // Validate and sanitize pagination parameters
     page = Number(page) || 1;
     limit = Number(limit) || 10;
+    
+    // Ensure page and limit are positive integers
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 10;
+    // Cap limit to prevent excessive data retrieval
+    if (limit > 100) limit = 100;
+    
     const skip = (page - 1) * limit;
 
     let filter = {};
 
-    // Category filter
-    if (category) filter.category = category;
+    // Category filter with validation
+    if (category) {
+        if (validateObjectId(category)) {
+            filter.category = category;
+        } else {
+            return res.status(400).json({ message: 'Invalid category ID' });
+        }
+    }
 
-    // Price filter
+    // Price filter with validation
     if (minPrice || maxPrice) {
         filter.price = {};
-        if (minPrice) filter.price.$gte = Number(minPrice);
-        if (maxPrice) filter.price.$lte = Number(maxPrice);
+        if (minPrice) {
+            const minPriceNum = Number(minPrice);
+            if (isNaN(minPriceNum) || minPriceNum < 0) {
+                return res.status(400).json({ message: 'Invalid minPrice parameter' });
+            }
+            filter.price.$gte = minPriceNum;
+        }
+        if (maxPrice) {
+            const maxPriceNum = Number(maxPrice);
+            if (isNaN(maxPriceNum) || maxPriceNum < 0) {
+                return res.status(400).json({ message: 'Invalid maxPrice parameter' });
+            }
+            filter.price.$lte = maxPriceNum;
+        }
+        // Validate that minPrice <= maxPrice if both are provided
+        if (minPrice && maxPrice && Number(minPrice) > Number(maxPrice)) {
+            return res.status(400).json({ message: 'minPrice cannot be greater than maxPrice' });
+        }
     }
 
     // Status filter (active/inactive)
@@ -371,17 +442,22 @@ const getAllProductsAdmin = handleAsync(async (req, res) => {
     if (stock === 'instock') filter.stock = { $gt: 0 };
     else if (stock === 'outofstock') filter.stock = 0;
 
-    // Search filter
+    // Search filter with regex escaping for security
     if (search && search.trim() !== '') {
+        // Escape special regex characters to prevent regex injection
+        const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         filter.$or = [
-            { name: { $regex: search, $options: 'i' } },
-            { description: { $regex: search, $options: 'i' } }
+            { name: { $regex: escapedSearch, $options: 'i' } },
+            { description: { $regex: escapedSearch, $options: 'i' } }
         ];
     }
 
-    // Sorting
+    // Sorting with validation
     let sort = {};
-    switch (sortBy) {
+    const validSortOptions = ['name', 'nameDesc', 'priceAsc', 'priceDesc', 'stock', 'stockDesc', 'rating', 'oldest', 'newest'];
+    const sortOption = sortBy && validSortOptions.includes(sortBy) ? sortBy : 'newest';
+    
+    switch (sortOption) {
         case 'name':
             sort.name = 1;
             break;
@@ -470,8 +546,86 @@ const updateProduct = handleAsync(async (req, res) => {
         return res.status(404).json({ message: 'Product not found' });
     }
 
+    // Validate request body exists
+    if (!req.body || typeof req.body !== 'object') {
+        console.error('❌ Update product error: req.body is missing or invalid', {
+            bodyType: typeof req.body,
+            body: req.body,
+            headers: req.headers,
+            method: req.method
+        });
+        return res.status(400).json({ 
+            message: 'Request body is required and must be an object',
+            received: req.body ? 'Body exists but invalid type' : 'Body is missing'
+        });
+    }
+
     // Extract all fields except slug (slug is auto-generated from name)
-    const { slug, ...updateData } = req.body;
+    // Use safe destructuring with default empty object
+    const { slug, ...updateData } = req.body || {};
+
+    // Validate name if provided
+    if (updateData.name !== undefined) {
+        if (!updateData.name || typeof updateData.name !== 'string' || updateData.name.trim() === '') {
+            return res.status(400).json({ message: 'Product name cannot be empty' });
+        }
+    }
+
+    // Validate price if provided
+    if (updateData.price !== undefined && updateData.price !== null) {
+        const priceNum = Number(updateData.price);
+        if (isNaN(priceNum) || priceNum < 0) {
+            return res.status(400).json({ message: 'Invalid product price' });
+        }
+    }
+
+    // Validate discountPrice if provided
+    if (updateData.discountPrice !== undefined && updateData.discountPrice !== null) {
+        const discountPriceNum = Number(updateData.discountPrice);
+        if (isNaN(discountPriceNum) || discountPriceNum < 0) {
+            return res.status(400).json({ message: 'Invalid discount price' });
+        }
+        // Use updated price if provided, otherwise use existing product price
+        const currentPrice = updateData.price !== undefined ? Number(updateData.price) : (product.price || 0);
+        if (currentPrice <= 0) {
+            return res.status(400).json({ message: 'Product price must be set before setting discount price' });
+        }
+        if (discountPriceNum >= currentPrice) {
+            return res.status(400).json({ message: 'Discount price must be less than regular price' });
+        }
+    }
+
+    // Validate and prepare category if provided
+    let validatedCategory = undefined;
+    if (updateData.category !== undefined) {
+        // If category is explicitly set to empty string or null, don't update it (keep existing)
+        if (updateData.category === '' || updateData.category === null) {
+            // Don't update category - keep existing value
+            validatedCategory = undefined;
+        } else {
+            // Validate category ID
+            if (!validateObjectId(updateData.category)) {
+                return res.status(400).json({ message: 'Invalid category ID' });
+            }
+            const Category = require('../models/Category');
+            const categoryExists = await Category.findById(updateData.category);
+            if (!categoryExists) {
+                return res.status(400).json({ message: 'Category not found' });
+            }
+            // Explicitly convert to ObjectId to ensure proper type
+            validatedCategory = mongoose.Types.ObjectId.isValid(updateData.category) 
+                ? new mongoose.Types.ObjectId(updateData.category)
+                : updateData.category;
+        }
+    }
+
+    // Validate stock if provided
+    if (updateData.stock !== undefined && updateData.stock !== null) {
+        const stockNum = Number(updateData.stock);
+        if (isNaN(stockNum) || stockNum < 0) {
+            return res.status(400).json({ message: 'Invalid stock quantity' });
+        }
+    }
 
     const {
         name, description, price, discountPrice, stock, category, images, attributes, isActive,
@@ -492,7 +646,10 @@ const updateProduct = handleAsync(async (req, res) => {
     if (price !== undefined) product.price = price;
     if (discountPrice !== undefined) product.discountPrice = discountPrice;
     if (stock !== undefined) product.stock = stock;
-    if (category !== undefined) product.category = category;
+    // Handle category separately to properly handle empty strings and null
+    if (validatedCategory !== undefined) {
+        product.category = validatedCategory;
+    }
     if (images !== undefined) product.images = images;
     if (attributes !== undefined) product.attributes = attributes;
     if (isActive !== undefined) product.isActive = isActive;
@@ -524,20 +681,115 @@ const updateProduct = handleAsync(async (req, res) => {
     if (metaDescription !== undefined) product.metaDescription = metaDescription;
     if (keywords !== undefined) product.keywords = keywords;
 
-    // Pack & Combo Options
-    if (packOptions !== undefined) product.packOptions = packOptions;
-    if (freeProducts !== undefined) product.freeProducts = freeProducts;
-    if (bundleWith !== undefined) product.bundleWith = bundleWith;
+    // Pack & Combo Options with validation
+    if (packOptions !== undefined) {
+        if (Array.isArray(packOptions)) {
+            // Validate each pack option
+            for (const pack of packOptions) {
+                if (pack.packSize !== undefined && (isNaN(Number(pack.packSize)) || Number(pack.packSize) < 1)) {
+                    return res.status(400).json({ message: 'Invalid pack size in pack options' });
+                }
+                if (pack.packPrice !== undefined && (isNaN(Number(pack.packPrice)) || Number(pack.packPrice) < 0)) {
+                    return res.status(400).json({ message: 'Invalid pack price in pack options' });
+                }
+            }
+            product.packOptions = packOptions;
+        } else {
+            return res.status(400).json({ message: 'packOptions must be an array' });
+        }
+    }
+    if (freeProducts !== undefined) {
+        if (Array.isArray(freeProducts)) {
+            // Validate each free product
+            for (const free of freeProducts) {
+                if (!free.product) {
+                    return res.status(400).json({ message: 'Product ID is required in free products' });
+                }
+                if (free.minQuantity !== undefined && (isNaN(Number(free.minQuantity)) || Number(free.minQuantity) < 1)) {
+                    return res.status(400).json({ message: 'Invalid min quantity in free products' });
+                }
+                if (free.quantity !== undefined && (isNaN(Number(free.quantity)) || Number(free.quantity) < 1)) {
+                    return res.status(400).json({ message: 'Invalid quantity in free products' });
+                }
+            }
+            product.freeProducts = freeProducts;
+        } else {
+            return res.status(400).json({ message: 'freeProducts must be an array' });
+        }
+    }
+    if (bundleWith !== undefined) {
+        if (Array.isArray(bundleWith)) {
+            // Validate each bundle
+            for (const bundle of bundleWith) {
+                if (!bundle.product) {
+                    return res.status(400).json({ message: 'Product ID is required in bundle with' });
+                }
+                if (bundle.bundlePrice !== undefined && (isNaN(Number(bundle.bundlePrice)) || Number(bundle.bundlePrice) < 0)) {
+                    return res.status(400).json({ message: 'Invalid bundle price in bundle with' });
+                }
+            }
+            product.bundleWith = bundleWith;
+        } else {
+            return res.status(400).json({ message: 'bundleWith must be an array' });
+        }
+    }
     if (offerText !== undefined) product.offerText = offerText;
     if (isOnOffer !== undefined) product.isOnOffer = isOnOffer;
 
-    // Shipping Options
+    // Shipping Options with validation
     if (freeShipping !== undefined) product.freeShipping = freeShipping;
-    if (shippingCost !== undefined) product.shippingCost = shippingCost;
-    if (minOrderForFreeShipping !== undefined) product.minOrderForFreeShipping = minOrderForFreeShipping;
+    if (shippingCost !== undefined && shippingCost !== null) {
+        const shippingCostNum = Number(shippingCost);
+        if (isNaN(shippingCostNum) || shippingCostNum < 0) {
+            return res.status(400).json({ message: 'Invalid shipping cost' });
+        }
+        product.shippingCost = shippingCostNum;
+    }
+    if (minOrderForFreeShipping !== undefined && minOrderForFreeShipping !== null) {
+        const minOrderNum = Number(minOrderForFreeShipping);
+        if (isNaN(minOrderNum) || minOrderNum < 0) {
+            return res.status(400).json({ message: 'Invalid minimum order for free shipping' });
+        }
+        product.minOrderForFreeShipping = minOrderNum;
+    }
+
+    // Handle image cleanup if images are being updated
+    if (updateData.images !== undefined && Array.isArray(updateData.images)) {
+        // Find images that were removed
+        const oldImages = Array.isArray(product.images) ? product.images : [];
+        const newImages = updateData.images.filter(img => img && typeof img === 'string' && img.trim() !== '');
+        const removedImages = oldImages.filter(img => img && !newImages.includes(img));
+        
+        // Delete removed images (async, don't block update)
+        if (removedImages.length > 0) {
+            removedImages.forEach(imageUrl => {
+                if (imageUrl && typeof imageUrl === 'string') {
+                    try {
+                        deleteLocalFileIfExists(imageUrl);
+                    } catch (fileError) {
+                        console.error('Error deleting image file:', imageUrl, fileError);
+                        // Continue with update even if file deletion fails
+                    }
+                }
+            });
+        }
+    }
+
+    // Validate images array if provided
+    if (updateData.images !== undefined && !Array.isArray(updateData.images)) {
+        return res.status(400).json({ message: 'Images must be an array' });
+    }
 
     const updatedProduct = await product.save();
-    res.json(updatedProduct);
+    
+    // Reload product to ensure we have the latest data from database
+    const reloadedProduct = await Product.findById(updatedProduct._id);
+    
+    // Populate category for response
+    await reloadedProduct.populate('category', 'name');
+    
+    console.log('✅ Product updated successfully:', reloadedProduct._id, reloadedProduct.name);
+    res.json(reloadedProduct);
 });
 
 const deleteProduct = handleAsync(async (req, res) => {
@@ -547,7 +799,58 @@ const deleteProduct = handleAsync(async (req, res) => {
         return res.status(404).json({ message: 'Product not found' });
     }
 
+    // Check if product is in any orders (optional: you might want to prevent deletion if product has orders)
+    const ordersWithProduct = await Order.countDocuments({
+        'items.product': req.params.id,
+        orderStatus: { $nin: ['cancelled', 'refunded'] }
+    });
+
+    if (ordersWithProduct > 0) {
+        // Option 1: Prevent deletion (recommended for production)
+        return res.status(400).json({ 
+            message: `Cannot delete product. It is associated with ${ordersWithProduct} active order(s). Consider marking it as inactive instead.`
+        });
+        
+        // Option 2: Allow deletion but log warning (uncomment if you want to allow)
+        // console.warn(`⚠️ Deleting product ${product.name} that is in ${ordersWithProduct} order(s)`);
+    }
+
+    // Delete associated images/files
+    try {
+        // Delete product images
+        if (product.images && Array.isArray(product.images)) {
+            product.images.forEach(imageUrl => {
+                if (imageUrl) deleteLocalFileIfExists(imageUrl);
+            });
+        }
+
+        // Delete pack option images
+        if (product.packOptions && Array.isArray(product.packOptions)) {
+            product.packOptions.forEach(pack => {
+                if (pack.image) deleteLocalFileIfExists(pack.image);
+            });
+        }
+
+        // Delete images from ingredients, benefits, etc.
+        const imageFields = ['ingredients', 'benefits', 'contraindications', 'certification', 'howToUse', 'howToStore', 'howToConsume'];
+        imageFields.forEach(field => {
+            if (product[field] && Array.isArray(product[field])) {
+                product[field].forEach(item => {
+                    if (item && item.image) deleteLocalFileIfExists(item.image);
+                });
+            }
+        });
+
+        console.log('🗑️ Deleted associated files for product:', product.name);
+    } catch (fileError) {
+        console.error('❌ Error deleting product files:', fileError);
+        // Continue with deletion even if file deletion fails
+    }
+
+    // Delete the product
     await Product.findByIdAndDelete(req.params.id);
+    
+    console.log('✅ Product deleted successfully:', product.name);
     res.json({ message: 'Product removed successfully' });
 });
 

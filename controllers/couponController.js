@@ -168,16 +168,25 @@ const deleteCoupon = handleAsync(async (req, res) => {
 // @route   POST /api/coupons/claim
 // @access  Public
 const claimCoupon = handleAsync(async (req, res) => {
-    const { phoneNumber, couponCode } = req.body;
+    let { phoneNumber, couponCode } = req.body;
 
-    if (!phoneNumber || !couponCode) {
-        return res.status(400).json({ message: 'Phone number and coupon code are required' });
+    // Clean and validate phone number
+    if (phoneNumber) {
+        phoneNumber = String(phoneNumber).replace(/\D/g, '').trim();
     }
 
-    // Validate phone number format (Indian format)
+    if (!phoneNumber || phoneNumber.length === 0) {
+        return res.status(400).json({ message: 'Phone number is required' });
+    }
+
+    if (!couponCode) {
+        return res.status(400).json({ message: 'Coupon code is required' });
+    }
+
+    // Validate phone number format (Indian format) - must be exactly 10 digits starting with 6, 7, 8, or 9
     const phoneRegex = /^[6-9]\d{9}$/;
-    if (!phoneRegex.test(phoneNumber)) {
-        return res.status(400).json({ message: 'Invalid phone number format' });
+    if (phoneNumber.length !== 10 || !phoneRegex.test(phoneNumber)) {
+        return res.status(400).json({ message: 'Invalid phone number format. Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9' });
     }
 
     // Check if this phone number has already claimed ANY coupon
@@ -261,12 +270,20 @@ const getActiveCoupons = handleAsync(async (req, res) => {
 const validateCoupon = handleAsync(async (req, res) => {
     const { couponCode, phoneNumber, orderAmount, productIds, categoryIds } = req.body;
 
-    if (!couponCode) {
+    // Validate required fields
+    if (!couponCode || !couponCode.trim()) {
         return res.status(400).json({ message: 'Coupon code is required' });
     }
 
+    // Validate orderAmount
+    const orderAmountNum = Number(orderAmount);
+    if (!Number.isFinite(orderAmountNum) || orderAmountNum < 0) {
+        return res.status(400).json({ message: 'Invalid order amount' });
+    }
+
+    // Find coupon
     const coupon = await Coupon.findOne({ 
-        code: couponCode.toUpperCase(),
+        code: String(couponCode).toUpperCase().trim(),
         isActive: true
     });
 
@@ -279,24 +296,31 @@ const validateCoupon = handleAsync(async (req, res) => {
         return res.status(400).json({ message: 'Coupon has expired or reached usage limit' });
     }
 
-    // Check if user can use this coupon
-    if (phoneNumber && !coupon.canUserClaim(phoneNumber)) {
-        return res.status(400).json({ 
-            message: `You have already used this coupon the maximum number of times` 
-        });
+    // Check if user can use this coupon (phoneNumber is optional)
+    if (phoneNumber) {
+        const cleanedPhone = String(phoneNumber).replace(/\D/g, '').trim();
+        if (cleanedPhone.length === 10 && !coupon.canUserClaim(cleanedPhone)) {
+            return res.status(400).json({ 
+                message: `You have already used this coupon the maximum number of times` 
+            });
+        }
     }
 
     // Check minimum purchase amount
-    if (orderAmount < coupon.minPurchaseAmount) {
+    if (orderAmountNum < coupon.minPurchaseAmount) {
         return res.status(400).json({ 
             message: `Minimum purchase amount of ₹${coupon.minPurchaseAmount} required` 
         });
     }
 
     // Check if coupon is applicable to products/categories
-    if (coupon.applicableProducts.length > 0) {
-        const hasApplicableProduct = productIds?.some(id => 
-            coupon.applicableProducts.some(pId => pId.toString() === id.toString())
+    // Ensure productIds and categoryIds are arrays
+    const validProductIds = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
+    const validCategoryIds = Array.isArray(categoryIds) ? categoryIds.filter(Boolean) : [];
+
+    if (coupon.applicableProducts && coupon.applicableProducts.length > 0) {
+        const hasApplicableProduct = validProductIds.some(id => 
+            coupon.applicableProducts.some(pId => String(pId) === String(id))
         );
         if (!hasApplicableProduct) {
             return res.status(400).json({ 
@@ -305,9 +329,9 @@ const validateCoupon = handleAsync(async (req, res) => {
         }
     }
 
-    if (coupon.applicableCategories.length > 0) {
-        const hasApplicableCategory = categoryIds?.some(id => 
-            coupon.applicableCategories.some(cId => cId.toString() === id.toString())
+    if (coupon.applicableCategories && coupon.applicableCategories.length > 0) {
+        const hasApplicableCategory = validCategoryIds.some(id => 
+            coupon.applicableCategories.some(cId => String(cId) === String(id))
         );
         if (!hasApplicableCategory) {
             return res.status(400).json({ 
