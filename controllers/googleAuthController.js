@@ -22,6 +22,13 @@ const googleAuth = handleAsync(async (req, res) => {
         let user = await User.findOne({ email: googleUser.email });
 
         if (user) {
+            // Check if account is active
+            if (!user.isActive) {
+                return res.status(401).json({ 
+                    message: 'Account is inactive or no longer exists' 
+                });
+            }
+            
             // User exists - login
             // Update Google ID if not set
             if (!user.googleId) {

@@ -86,7 +86,19 @@ const loginUser = handleAsync(async (req, res) => {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
-    if (user && (await user.matchPassword(password))) {
+    
+    // Check if user exists
+    if (!user) {
+        return res.status(401).json({ message: 'Invalid email or password' });
+    }
+    
+    // Check if account is active
+    if (!user.isActive) {
+        return res.status(401).json({ message: 'Account is inactive or no longer exists' });
+    }
+    
+    // Verify password
+    if (await user.matchPassword(password)) {
         res.json({
             _id: user._id,
             name: user.name,
