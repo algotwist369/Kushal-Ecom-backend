@@ -31,7 +31,24 @@ const userSchema = new mongoose.Schema(
         password: {
             type: String,
             required: true,
-            minlength: 6
+            minlength: 8,
+            validate: {
+                validator: function(v) {
+                    // Skip validation if password is already hashed (bcrypt hashes start with $2a$, $2b$, or $2y$)
+                    // This prevents validation errors when loading existing users or updating other fields
+                    if (v && (v.startsWith('$2a$') || v.startsWith('$2b$') || v.startsWith('$2y$'))) {
+                        return true; // Already hashed, skip validation
+                    }
+                    // Skip validation if password hasn't been modified (updating other fields)
+                    if (this.isModified && !this.isModified('password')) {
+                        return true; // Password not changed, skip validation
+                    }
+                    // Validate password format for new passwords or password changes
+                    // At least 8 characters, with uppercase, lowercase, number and optionally special character
+                    return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$/.test(v);
+                },
+                message: 'Password must be at least 8 characters with uppercase, lowercase, and number'
+            }
         },
         phone: {
             type: String,

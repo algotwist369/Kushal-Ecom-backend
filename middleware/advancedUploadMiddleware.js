@@ -28,7 +28,16 @@ const createStorage = (subdirectories = []) => {
 
 const getFileFilter = (allowedMimeTypes = []) => {
     if (!allowedMimeTypes.length) {
-        return null;
+        // Default: allow only images if no specific types specified
+        const defaultImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+        const allowed = new Set(defaultImageTypes);
+        return (_req, file, cb) => {
+            if (allowed.has(file.mimetype)) {
+                cb(null, true);
+            } else {
+                cb(new Error(`Unsupported file type: ${file.mimetype}. Only images are allowed.`));
+            }
+        };
     }
 
     const allowed = new Set(allowedMimeTypes);

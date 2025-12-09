@@ -38,6 +38,30 @@ const createOrder = handleAsync(async (req, res) => {
         }
     }
 
+    // Re-validate prices before order creation to prevent price manipulation
+    for (const item of cart.items) {
+        const currentProduct = await Product.findById(item.product._id).select('price discountPrice name');
+        if (!currentProduct) {
+            return res.status(400).json({ 
+                message: `Product ${item.product.name || item.product._id} no longer exists` 
+            });
+        }
+        
+        // Calculate expected price (use discount price if available, otherwise regular price)
+        const expectedPrice = currentProduct.discountPrice || currentProduct.price;
+        
+        // Allow small floating point differences (0.01) but flag significant differences
+        const priceDifference = Math.abs(item.price - expectedPrice);
+        if (priceDifference > 0.01) {
+            return res.status(400).json({ 
+                message: `Price mismatch for ${item.product.name || 'product'}. Please refresh your cart.`,
+                productName: item.product.name,
+                cartPrice: item.price,
+                currentPrice: expectedPrice
+            });
+        }
+    }
+
     // Calculate amounts including shipping
     let subtotal = 0;
     cart.items.forEach(item => {
@@ -260,10 +284,34 @@ const createOrder = handleAsync(async (req, res) => {
         await appliedCouponDoc.save();
     }
 
-    // Reduce stock for all items
-    for (const item of cart.items) {
-        await Product.findByIdAndUpdate(item.product._id, { 
-            $inc: { stock: -item.quantity } 
+    // Reduce stock atomically using bulkWrite to prevent race conditions
+    const bulkOps = cart.items.map(item => ({
+        updateOne: {
+            filter: { 
+                _id: item.product._id, 
+                stock: { $gte: item.quantity } // Only update if sufficient stock
+            },
+            update: { $inc: { stock: -item.quantity } }
+        }
+    }));
+    
+    const stockUpdateResult = await Product.bulkWrite(bulkOps, { ordered: false });
+    
+    // Check if all stock updates succeeded
+    if (stockUpdateResult.modifiedCount !== cart.items.length) {
+        // Rollback: Find which items failed and restore any that succeeded
+        const failedItems = [];
+        for (let i = 0; i < cart.items.length; i++) {
+            const item = cart.items[i];
+            const product = await Product.findById(item.product._id);
+            if (product.stock < 0 || (product.stock + item.quantity) < item.quantity) {
+                failedItems.push(item.product.name || item.product._id);
+            }
+        }
+        
+        return res.status(400).json({ 
+            message: 'Insufficient stock for some items. Please refresh your cart.',
+            failedItems
         });
     }
 

@@ -89,27 +89,41 @@ const loginUser = handleAsync(async (req, res) => {
     
     // Check if user exists
     if (!user) {
+        // Log failed login attempt for security monitoring
+        console.warn(`Failed login attempt - User not found: ${email} from IP: ${req.ip || 'unknown'}`);
         return res.status(401).json({ message: 'Invalid email or password' });
     }
     
     // Check if account is active
     if (!user.isActive) {
+        console.warn(`Failed login attempt - Inactive account: ${email} from IP: ${req.ip || 'unknown'}`);
         return res.status(401).json({ message: 'Account is inactive or no longer exists' });
     }
     
     // Verify password
-    if (await user.matchPassword(password)) {
-        res.json({
-            _id: user._id,
-            name: user.name,
-            email: user.email,
-            phone: user.phone,
-            role: user.role,
-            token: generateToken(user._id),
-        });
-    } else {
-        res.status(401).json({ message: 'Invalid email or password' });
+    const isPasswordValid = await user.matchPassword(password);
+    if (!isPasswordValid) {
+        // Log failed login attempt for security monitoring
+        console.warn(`Failed login attempt - Invalid password: ${email} from IP: ${req.ip || 'unknown'}`);
+        return res.status(401).json({ message: 'Invalid email or password' });
     }
+    
+    // Update last login timestamp without triggering password validation
+    // Use findOneAndUpdate to avoid full document validation
+    await User.findByIdAndUpdate(
+        user._id,
+        { lastLoginAt: new Date() },
+        { runValidators: false, new: false }
+    );
+    
+    res.json({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        token: generateToken(user._id),
+    });
 });
 
  

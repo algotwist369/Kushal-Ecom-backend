@@ -139,7 +139,9 @@ const orderSchema = new mongoose.Schema(
 );
 
 orderSchema.index({ user: 1, createdAt: -1 });
-orderSchema.index({ orderStatus: 1 });
+orderSchema.index({ orderStatus: 1, createdAt: -1 }); // Status with date for better queries
+orderSchema.index({ paymentStatus: 1 }); // Payment status filtering
+orderSchema.index({ createdAt: -1 }); // Date sorting
 
 module.exports = mongoose.model('Order', orderSchema);
 

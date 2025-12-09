@@ -129,14 +129,28 @@ const deleteUploadedFile = handleAsync(async (req, res) => {
         return res.status(400).json({ message: 'File path is required' });
     }
 
-    // Extract relative path from URL
+    // Extract relative path from URL and sanitize to prevent path traversal
     let relativePath = filePath;
     if (filePath.includes('/uploads/')) {
         const uploadsIndex = filePath.indexOf('/uploads/');
         relativePath = filePath.substring(uploadsIndex);
     }
 
-    const fullPath = path.join(__dirname, '..', relativePath);
+    // Normalize and validate path to prevent directory traversal attacks
+    const normalizedPath = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
+    if (!normalizedPath.startsWith('uploads/')) {
+        return res.status(400).json({ message: 'Invalid file path' });
+    }
+
+    const fullPath = path.join(__dirname, '..', normalizedPath);
+    
+    // Additional security: ensure the resolved path is still within uploads directory
+    const uploadsDir = path.join(__dirname, '..', 'uploads');
+    const resolvedPath = path.resolve(fullPath);
+    if (!resolvedPath.startsWith(path.resolve(uploadsDir))) {
+        return res.status(400).json({ message: 'Invalid file path - outside uploads directory' });
+    }
+
     const deleted = deleteFile(fullPath);
 
     if (deleted) {

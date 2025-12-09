@@ -71,10 +71,20 @@ const getAllProductsByFilter = handleAsync(async (req, res) => {
     let filter = { isActive: true };
 
     // ----------------
-    // Multiple categories filter
+    // Multiple categories filter - support both category and categories fields
     // ----------------
     if (categories && Array.isArray(categories) && categories.length > 0) {
-        filter.category = { $in: categories };
+        // Filter by either the old category field or new categories array
+        filter.$or = [
+            { category: { $in: categories } },
+            { categories: { $in: categories } }
+        ];
+        // If $or already exists from price buckets, wrap in $and
+        if (filter.$or && filter.$and) {
+            const existingOr = filter.$or;
+            filter.$or = undefined;
+            filter.$and.push({ $or: existingOr });
+        }
     }
 
     // ----------------
@@ -156,7 +166,8 @@ const getAllProductsByFilter = handleAsync(async (req, res) => {
         .sort(sort)
         .skip(skip)
         .limit(limit)
-        .populate('category', 'name');
+        .populate('category', 'name')
+        .populate('categories', 'name');
 
     // ----------------
     // Chunking / batch data
@@ -182,7 +193,7 @@ const createProduct = handleAsync(async (req, res) => {
     const { slug, ...productData } = req.body;
 
     const {
-        name, description, price, discountPrice, stock, category, images, attributes, isActive,
+        name, description, price, discountPrice, stock, category, categories, images, attributes, isActive,
         // Ayurvedic-specific fields
         ingredients, benefits, dosage, contraindications, shelfLife, storageInstructions,
         manufacturer, batchNumber, expiryDate, certification, origin, processingMethod,
@@ -203,16 +214,42 @@ const createProduct = handleAsync(async (req, res) => {
         return res.status(400).json({ message: 'Valid product price is required' });
     }
 
-    // Validate category if provided
-    if (category) {
+    // Validate categories - support both single category (backward compatibility) and categories array
+    let validatedCategories = [];
+    const Category = require('../models/Category');
+    
+    // Handle categories array (new way)
+    if (categories && Array.isArray(categories) && categories.length > 0) {
+        // Remove duplicates and empty values
+        const uniqueCategories = [...new Set(categories.filter(cat => cat && cat.trim() !== ''))];
+        
+        // Validate each category ID
+        for (const catId of uniqueCategories) {
+            if (!validateObjectId(catId)) {
+                return res.status(400).json({ message: `Invalid category ID: ${catId}` });
+            }
+            const categoryExists = await Category.findById(catId);
+            if (!categoryExists) {
+                return res.status(400).json({ message: `Category not found: ${catId}` });
+            }
+        }
+        validatedCategories = uniqueCategories;
+    }
+    // Handle single category (backward compatibility)
+    else if (category) {
         if (!validateObjectId(category)) {
             return res.status(400).json({ message: 'Invalid category ID' });
         }
-        const Category = require('../models/Category');
         const categoryExists = await Category.findById(category);
         if (!categoryExists) {
             return res.status(400).json({ message: 'Category not found' });
         }
+        validatedCategories = [category];
+    }
+    
+    // At least one category is required
+    if (validatedCategories.length === 0) {
+        return res.status(400).json({ message: 'At least one category is required' });
     }
 
     // Validate discountPrice if provided
@@ -240,7 +277,8 @@ const createProduct = handleAsync(async (req, res) => {
         price,
         discountPrice,
         stock,
-        category,
+        category: validatedCategories[0], // Keep single category for backward compatibility
+        categories: validatedCategories, // New multiple categories array
         images,
         attributes,
         isActive,
@@ -284,6 +322,15 @@ const createProduct = handleAsync(async (req, res) => {
 
     const createdProduct = await product.save();
     console.log('✅ Product created successfully:', createdProduct._id, createdProduct.name);
+
+    // Emit real-time product creation event via Socket.IO
+    if (global.io) {
+        const populatedProduct = await Product.findById(createdProduct._id)
+            .populate('category', 'name')
+            .populate('categories', 'name');
+        global.io.emit('product_created', populatedProduct);
+        console.log('🔔 Real-time product creation event sent:', createdProduct._id);
+    }
 
     // Send email notification to all registered users
     try {
@@ -376,7 +423,8 @@ const getProducts = handleAsync(async (req, res) => {
         .sort(sort)
         .skip(skip)
         .limit(limit)
-        .populate('category', 'name');
+        .populate('category', 'name')
+        .populate('categories', 'name');
 
     const count = await Product.countDocuments(filter);
 
@@ -401,10 +449,13 @@ const getAllProductsAdmin = handleAsync(async (req, res) => {
 
     let filter = {};
 
-    // Category filter with validation
+    // Category filter with validation - support both category and categories fields
     if (category) {
         if (validateObjectId(category)) {
-            filter.category = category;
+            filter.$or = [
+                { category: category },
+                { categories: category }
+            ];
         } else {
             return res.status(400).json({ message: 'Invalid category ID' });
         }
@@ -491,7 +542,8 @@ const getAllProductsAdmin = handleAsync(async (req, res) => {
         .sort(sort)
         .skip(skip)
         .limit(limit)
-        .populate('category', 'name');
+        .populate('category', 'name')
+        .populate('categories', 'name');
 
     const count = await Product.countDocuments(filter);
 
@@ -512,11 +564,13 @@ const getProductById = handleAsync(async (req, res) => {
     if (validateObjectId(id)) {
         product = await Product.findById(id)
             .populate('category', 'name')
+            .populate('categories', 'name')
             .populate('reviews.user', 'name email');
     } else {
         // Treat as slug
         product = await Product.findOne({ slug: id })
             .populate('category', 'name')
+            .populate('categories', 'name')
             .populate('reviews.user', 'name email');
     }
 
@@ -585,37 +639,92 @@ const updateProduct = handleAsync(async (req, res) => {
         if (isNaN(discountPriceNum) || discountPriceNum < 0) {
             return res.status(400).json({ message: 'Invalid discount price' });
         }
-        // Use updated price if provided, otherwise use existing product price
-        const currentPrice = updateData.price !== undefined ? Number(updateData.price) : (product.price || 0);
-        if (currentPrice <= 0) {
-            return res.status(400).json({ message: 'Product price must be set before setting discount price' });
+        
+        // Determine the current price (updated or existing)
+        let currentPrice;
+        if (updateData.price !== undefined && updateData.price !== null) {
+            currentPrice = Number(updateData.price);
+            // Validate the new price first
+            if (isNaN(currentPrice) || currentPrice < 0) {
+                return res.status(400).json({ message: 'Invalid product price' });
+            }
+        } else {
+            currentPrice = product.price || 0;
         }
+        
+        // Price must be greater than 0 to have a discount
+        if (currentPrice <= 0) {
+            return res.status(400).json({ message: 'Product price must be greater than 0 before setting discount price' });
+        }
+        
+        // Discount price must be less than regular price
         if (discountPriceNum >= currentPrice) {
             return res.status(400).json({ message: 'Discount price must be less than regular price' });
         }
     }
 
-    // Validate and prepare category if provided
-    let validatedCategory = undefined;
-    if (updateData.category !== undefined) {
+    // Validate and prepare categories - support both single category (backward compatibility) and categories array
+    let validatedCategories = undefined;
+    const Category = require('../models/Category');
+    
+    // Handle categories array (new way) - takes precedence over single category
+    if (updateData.categories !== undefined) {
+        if (Array.isArray(updateData.categories)) {
+            // If empty array, preserve existing categories (don't require at least one)
+            if (updateData.categories.length === 0) {
+                // Keep existing categories - don't update
+                validatedCategories = undefined;
+            } else {
+                // Remove duplicates and empty values - handle both strings and ObjectIds
+                const uniqueCategories = [...new Set(updateData.categories.filter(cat => {
+                    if (!cat) return false;
+                    // Handle both string and ObjectId types
+                    if (typeof cat === 'string') {
+                        return cat.trim() !== '';
+                    }
+                    // ObjectId or other types
+                    return true;
+                }))];
+                
+                if (uniqueCategories.length === 0) {
+                    return res.status(400).json({ message: 'At least one valid category is required' });
+                }
+                
+                // Validate each category ID
+                for (const catId of uniqueCategories) {
+                    // Convert to string for validation if needed
+                    const catIdStr = catId.toString ? catId.toString() : catId;
+                    if (!validateObjectId(catIdStr)) {
+                        return res.status(400).json({ message: `Invalid category ID: ${catIdStr}` });
+                    }
+                    const categoryExists = await Category.findById(catIdStr);
+                    if (!categoryExists) {
+                        return res.status(400).json({ message: `Category not found: ${catIdStr}` });
+                    }
+                }
+                validatedCategories = uniqueCategories;
+            }
+        } else {
+            return res.status(400).json({ message: 'Categories must be an array' });
+        }
+    }
+    // Handle single category (backward compatibility) - only if categories not provided
+    else if (updateData.category !== undefined) {
         // If category is explicitly set to empty string or null, don't update it (keep existing)
         if (updateData.category === '' || updateData.category === null) {
-            // Don't update category - keep existing value
-            validatedCategory = undefined;
+            // Don't update categories - keep existing value
+            validatedCategories = undefined;
         } else {
             // Validate category ID
             if (!validateObjectId(updateData.category)) {
                 return res.status(400).json({ message: 'Invalid category ID' });
             }
-            const Category = require('../models/Category');
             const categoryExists = await Category.findById(updateData.category);
             if (!categoryExists) {
                 return res.status(400).json({ message: 'Category not found' });
             }
-            // Explicitly convert to ObjectId to ensure proper type
-            validatedCategory = mongoose.Types.ObjectId.isValid(updateData.category) 
-                ? new mongoose.Types.ObjectId(updateData.category)
-                : updateData.category;
+            // Convert single category to array for consistency
+            validatedCategories = [updateData.category];
         }
     }
 
@@ -628,7 +737,7 @@ const updateProduct = handleAsync(async (req, res) => {
     }
 
     const {
-        name, description, price, discountPrice, stock, category, images, attributes, isActive,
+        name, description, price, discountPrice, stock, category, categories, images, attributes, isActive,
         // Ayurvedic-specific fields
         ingredients, benefits, dosage, contraindications, shelfLife, storageInstructions,
         manufacturer, batchNumber, expiryDate, certification, origin, processingMethod,
@@ -646,9 +755,10 @@ const updateProduct = handleAsync(async (req, res) => {
     if (price !== undefined) product.price = price;
     if (discountPrice !== undefined) product.discountPrice = discountPrice;
     if (stock !== undefined) product.stock = stock;
-    // Handle category separately to properly handle empty strings and null
-    if (validatedCategory !== undefined) {
-        product.category = validatedCategory;
+    // Handle categories - update both category (backward compatibility) and categories array
+    if (validatedCategories !== undefined) {
+        product.categories = validatedCategories;
+        product.category = validatedCategories[0]; // Set first category as primary for backward compatibility
     }
     if (images !== undefined) product.images = images;
     if (attributes !== undefined) product.attributes = attributes;
@@ -684,13 +794,34 @@ const updateProduct = handleAsync(async (req, res) => {
     // Pack & Combo Options with validation
     if (packOptions !== undefined) {
         if (Array.isArray(packOptions)) {
-            // Validate each pack option
-            for (const pack of packOptions) {
-                if (pack.packSize !== undefined && (isNaN(Number(pack.packSize)) || Number(pack.packSize) < 1)) {
-                    return res.status(400).json({ message: 'Invalid pack size in pack options' });
+            // Validate each pack option - both packSize and packPrice are required together
+            for (let i = 0; i < packOptions.length; i++) {
+                const pack = packOptions[i];
+                if (!pack || typeof pack !== 'object') {
+                    return res.status(400).json({ message: `Invalid pack option at index ${i}` });
                 }
-                if (pack.packPrice !== undefined && (isNaN(Number(pack.packPrice)) || Number(pack.packPrice) < 0)) {
-                    return res.status(400).json({ message: 'Invalid pack price in pack options' });
+                
+                // Both packSize and packPrice must be provided together
+                const hasPackSize = pack.packSize !== undefined && pack.packSize !== null && pack.packSize !== '';
+                const hasPackPrice = pack.packPrice !== undefined && pack.packPrice !== null && pack.packPrice !== '';
+                
+                if (hasPackSize || hasPackPrice) {
+                    // If one is provided, both must be provided
+                    if (!hasPackSize || !hasPackPrice) {
+                        return res.status(400).json({ message: `Pack option at index ${i}: Both packSize and packPrice are required together` });
+                    }
+                    
+                    // Validate packSize
+                    const packSizeNum = Number(pack.packSize);
+                    if (isNaN(packSizeNum) || packSizeNum < 1) {
+                        return res.status(400).json({ message: `Invalid pack size at index ${i}: must be a positive number` });
+                    }
+                    
+                    // Validate packPrice
+                    const packPriceNum = Number(pack.packPrice);
+                    if (isNaN(packPriceNum) || packPriceNum < 0) {
+                        return res.status(400).json({ message: `Invalid pack price at index ${i}: must be a non-negative number` });
+                    }
                 }
             }
             product.packOptions = packOptions;
@@ -700,16 +831,43 @@ const updateProduct = handleAsync(async (req, res) => {
     }
     if (freeProducts !== undefined) {
         if (Array.isArray(freeProducts)) {
-            // Validate each free product
-            for (const free of freeProducts) {
+            // Validate each free product and check product existence
+            for (let i = 0; i < freeProducts.length; i++) {
+                const free = freeProducts[i];
+                if (!free || typeof free !== 'object') {
+                    return res.status(400).json({ message: `Invalid free product at index ${i}` });
+                }
+                
                 if (!free.product) {
-                    return res.status(400).json({ message: 'Product ID is required in free products' });
+                    return res.status(400).json({ message: `Product ID is required in free products at index ${i}` });
                 }
-                if (free.minQuantity !== undefined && (isNaN(Number(free.minQuantity)) || Number(free.minQuantity) < 1)) {
-                    return res.status(400).json({ message: 'Invalid min quantity in free products' });
+                
+                // Validate product ID format
+                const productIdStr = free.product.toString ? free.product.toString() : free.product;
+                if (!validateObjectId(productIdStr)) {
+                    return res.status(400).json({ message: `Invalid product ID in free products at index ${i}` });
                 }
-                if (free.quantity !== undefined && (isNaN(Number(free.quantity)) || Number(free.quantity) < 1)) {
-                    return res.status(400).json({ message: 'Invalid quantity in free products' });
+                
+                // Check if product exists
+                const productExists = await Product.findById(productIdStr);
+                if (!productExists) {
+                    return res.status(400).json({ message: `Product not found in free products at index ${i}: ${productIdStr}` });
+                }
+                
+                // Validate minQuantity
+                if (free.minQuantity !== undefined && free.minQuantity !== null && free.minQuantity !== '') {
+                    const minQtyNum = Number(free.minQuantity);
+                    if (isNaN(minQtyNum) || minQtyNum < 1) {
+                        return res.status(400).json({ message: `Invalid min quantity in free products at index ${i}: must be a positive number` });
+                    }
+                }
+                
+                // Validate quantity
+                if (free.quantity !== undefined && free.quantity !== null && free.quantity !== '') {
+                    const qtyNum = Number(free.quantity);
+                    if (isNaN(qtyNum) || qtyNum < 1) {
+                        return res.status(400).json({ message: `Invalid quantity in free products at index ${i}: must be a positive number` });
+                    }
                 }
             }
             product.freeProducts = freeProducts;
@@ -719,13 +877,35 @@ const updateProduct = handleAsync(async (req, res) => {
     }
     if (bundleWith !== undefined) {
         if (Array.isArray(bundleWith)) {
-            // Validate each bundle
-            for (const bundle of bundleWith) {
-                if (!bundle.product) {
-                    return res.status(400).json({ message: 'Product ID is required in bundle with' });
+            // Validate each bundle and check product existence
+            for (let i = 0; i < bundleWith.length; i++) {
+                const bundle = bundleWith[i];
+                if (!bundle || typeof bundle !== 'object') {
+                    return res.status(400).json({ message: `Invalid bundle at index ${i}` });
                 }
-                if (bundle.bundlePrice !== undefined && (isNaN(Number(bundle.bundlePrice)) || Number(bundle.bundlePrice) < 0)) {
-                    return res.status(400).json({ message: 'Invalid bundle price in bundle with' });
+                
+                if (!bundle.product) {
+                    return res.status(400).json({ message: `Product ID is required in bundle with at index ${i}` });
+                }
+                
+                // Validate product ID format
+                const productIdStr = bundle.product.toString ? bundle.product.toString() : bundle.product;
+                if (!validateObjectId(productIdStr)) {
+                    return res.status(400).json({ message: `Invalid product ID in bundle with at index ${i}` });
+                }
+                
+                // Check if product exists
+                const productExists = await Product.findById(productIdStr);
+                if (!productExists) {
+                    return res.status(400).json({ message: `Product not found in bundle with at index ${i}: ${productIdStr}` });
+                }
+                
+                // Validate bundlePrice
+                if (bundle.bundlePrice !== undefined && bundle.bundlePrice !== null && bundle.bundlePrice !== '') {
+                    const bundlePriceNum = Number(bundle.bundlePrice);
+                    if (isNaN(bundlePriceNum) || bundlePriceNum < 0) {
+                        return res.status(400).json({ message: `Invalid bundle price at index ${i}: must be a non-negative number` });
+                    }
                 }
             }
             product.bundleWith = bundleWith;
@@ -785,10 +965,18 @@ const updateProduct = handleAsync(async (req, res) => {
     // Reload product to ensure we have the latest data from database
     const reloadedProduct = await Product.findById(updatedProduct._id);
     
-    // Populate category for response
+    // Populate categories for response
     await reloadedProduct.populate('category', 'name');
+    await reloadedProduct.populate('categories', 'name');
     
     console.log('✅ Product updated successfully:', reloadedProduct._id, reloadedProduct.name);
+    
+    // Emit real-time product update event via Socket.IO
+    if (global.io) {
+        global.io.emit('product_updated', reloadedProduct);
+        console.log('🔔 Real-time product update event sent:', reloadedProduct._id);
+    }
+    
     res.json(reloadedProduct);
 });
 
@@ -851,6 +1039,13 @@ const deleteProduct = handleAsync(async (req, res) => {
     await Product.findByIdAndDelete(req.params.id);
     
     console.log('✅ Product deleted successfully:', product.name);
+    
+    // Emit real-time product deletion event via Socket.IO
+    if (global.io) {
+        global.io.emit('product_deleted', { productId: req.params.id, productName: product.name });
+        console.log('🔔 Real-time product deletion event sent:', req.params.id);
+    }
+    
     res.json({ message: 'Product removed successfully' });
 });
 
@@ -920,6 +1115,7 @@ const addOrUpdateReview = handleAsync(async (req, res) => {
     // Fetch the updated product with populated fields to return
     const updatedProduct = await Product.findById(product._id)
         .populate('category', 'name')
+        .populate('categories', 'name')
         .populate('reviews.user', 'name email');
 
     // Add rating statistics
@@ -974,6 +1170,7 @@ const getBestsellers = handleAsync(async (req, res) => {
         if (orderCount === 0) {
             const fallbackProducts = await Product.find({ isActive: true })
                 .populate('category', 'name')
+                .populate('categories', 'name')
                 .select('-reviews')
                 .sort({ averageRating: -1, numReviews: -1, createdAt: -1 })
                 .limit(limitNum)
@@ -1017,6 +1214,7 @@ const getBestsellers = handleAsync(async (req, res) => {
             // No bestsellers found, use fallback
             const fallbackProducts = await Product.find({ isActive: true })
                 .populate('category', 'name')
+                .populate('categories', 'name')
                 .select('-reviews')
                 .sort({ averageRating: -1, numReviews: -1, createdAt: -1 })
                 .limit(limitNum)
@@ -1040,6 +1238,7 @@ const getBestsellers = handleAsync(async (req, res) => {
             isActive: true
         })
             .populate('category', 'name')
+            .populate('categories', 'name')
             .select('-reviews')
             .lean();
 
@@ -1105,6 +1304,7 @@ const getNewArrivals = handleAsync(async (req, res) => {
             createdAt: { $gte: thirtyDaysAgo }
         })
             .populate('category', 'name')
+            .populate('categories', 'name')
             .select('-reviews')
             .sort({ createdAt: -1 })
             .limit(limitNum)
@@ -1117,6 +1317,7 @@ const getNewArrivals = handleAsync(async (req, res) => {
                 _id: { $nin: newArrivals.map(p => p._id) }
             })
                 .populate('category', 'name')
+                .populate('categories', 'name')
                 .select('-reviews')
                 .sort({ createdAt: -1 })
                 .limit(limitNum - newArrivals.length)

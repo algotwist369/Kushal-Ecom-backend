@@ -35,9 +35,30 @@ const paymentLimiter = buildLimiter({
     message: 'Payment attempts rate limit exceeded. Please wait before retrying.'
 });
 
+const orderLimiter = buildLimiter({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: parseInt(process.env.RATE_LIMIT_ORDER_MAX, 10) || 30,
+    message: 'Too many order requests. Please try again later.'
+});
+
+const uploadLimiter = buildLimiter({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: parseInt(process.env.RATE_LIMIT_UPLOAD_MAX, 10) || 50,
+    message: 'Too many file upload requests. Please try again later.'
+});
+
+const cartLimiter = buildLimiter({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: parseInt(process.env.RATE_LIMIT_CART_MAX, 10) || 100,
+    message: 'Too many cart requests. Please try again later.'
+});
+
 module.exports = {
     generalLimiter,
     authLimiter,
-    paymentLimiter
+    paymentLimiter,
+    orderLimiter,
+    uploadLimiter,
+    cartLimiter
 };
 

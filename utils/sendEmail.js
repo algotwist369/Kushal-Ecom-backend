@@ -60,6 +60,12 @@ const sendEmail = async (...args) => {
         throw new Error('Email recipient (to) is required');
     }
 
+    // Validate email address to prevent email injection
+    const validator = require('validator');
+    if (!validator.isEmail(payload.to)) {
+        throw new Error('Invalid email address format');
+    }
+
     const mailOptions = {
         from:
             payload.from ||

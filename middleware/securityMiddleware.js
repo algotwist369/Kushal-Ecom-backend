@@ -42,19 +42,45 @@ const securityHeaders = (req, res, next) => {
 };
 
 const preventParameterPollution = (req, res, next) => {
+    // Check if query exists and has properties
+    if (!req.query || Object.keys(req.query).length === 0) {
+        return next();
+    }
+
     const cleanQuery = {};
+    let needsCleaning = false;
 
     Object.keys(req.query).forEach((key) => {
         const value = req.query[key];
 
         if (Array.isArray(value)) {
             cleanQuery[key] = value[value.length - 1];
+            needsCleaning = true;
         } else if (value !== undefined) {
             cleanQuery[key] = value;
         }
     });
 
-    req.query = cleanQuery;
+    // Only update if we found arrays (parameter pollution)
+    if (needsCleaning) {
+        // Use Object.defineProperty to set query for Express 5 compatibility
+        try {
+            Object.defineProperty(req, 'query', {
+                value: cleanQuery,
+                writable: true,
+                configurable: true,
+                enumerable: true
+            });
+        } catch (error) {
+            // If we can't set it directly, use a fallback property
+            // Routes should check req.cleanQuery if req.query is read-only
+            req.cleanQuery = cleanQuery;
+            if (process.env.NODE_ENV === 'development') {
+                console.warn('Could not set req.query directly, using req.cleanQuery');
+            }
+        }
+    }
+    
     next();
 };
 
@@ -70,11 +96,14 @@ const corsOptions = {
             return callback(null, true);
         }
 
-        // Allow subdomains of allowed origins
+        // Allow only explicit subdomains (www, admin, api) for security
         const originHost = origin.replace(/^https?:\/\//i, '');
+        const allowedSubdomains = ['www', 'admin', 'api']; // Explicit whitelist
         const isSubdomainAllowed = allowedOrigins.some((allowed) => {
             const allowedHost = allowed.replace(/^https?:\/\//i, '');
-            return originHost === allowedHost || originHost.endsWith(`.${allowedHost}`);
+            if (originHost === allowedHost) return true;
+            // Check if it's an allowed subdomain
+            return allowedSubdomains.some(sub => originHost === `${sub}.${allowedHost}`);
         });
 
         if (isSubdomainAllowed) {

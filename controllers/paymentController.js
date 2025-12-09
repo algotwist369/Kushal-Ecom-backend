@@ -89,15 +89,31 @@ const verifyRazorpayPayment = handleAsync(async (req, res) => {
         return res.status(400).json({ message: 'Payment verification failed' });
     }
 
-    // Update order status to paid
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: 'Order not found' });
+    // Atomic update to prevent race condition - check if already paid
+    const order = await Order.findOneAndUpdate(
+        { 
+            _id: orderId, 
+            paymentStatus: { $ne: 'paid' } // Only update if not already paid
+        },
+        { 
+            paymentStatus: 'paid',
+            orderStatus: 'processing',
+            razorpayPaymentId: razorpay_payment_id
+        },
+        { new: true }
+    );
 
-    order.paymentStatus = 'paid';
-    order.orderStatus = 'processing';
-    order.razorpayPaymentId = razorpay_payment_id;
-
-    await order.save();
+    if (!order) {
+        // Check if order exists but is already paid
+        const existingOrder = await Order.findById(orderId);
+        if (existingOrder && existingOrder.paymentStatus === 'paid') {
+            return res.status(400).json({ 
+                message: 'Order has already been paid',
+                order: existingOrder
+            });
+        }
+        return res.status(404).json({ message: 'Order not found' });
+    }
 
     res.json({ message: 'Payment verified successfully', order });
 });

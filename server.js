@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
+const mongoose = require('mongoose');
 const connectDB = require('./config/db.js');
 
 // Security middleware
@@ -15,7 +16,7 @@ const {
 } = require('./middleware/securityMiddleware');
 
 // Rate limiting
-const { generalLimiter, authLimiter, paymentLimiter } = require('./middleware/rateLimiter');
+const { generalLimiter, authLimiter, paymentLimiter, orderLimiter, uploadLimiter, cartLimiter } = require('./middleware/rateLimiter');
 
 // Logging
 const { accessLogger, errorLogger, consoleLogger, addRequestId } = require('./middleware/requestLogger');
@@ -43,6 +44,21 @@ const uploadRoutes = require('./routes/uploadRoutes.js');
 const fileManagementRoutes = require('./routes/fileManagementRoutes.js');
 const popUpRoutes = require('./routes/popUpRoutes.js');
 const contactRoutes = require('./routes/contactRoutes.js');
+const heroImageRoutes = require('./routes/heroImageRoutes.js');
+
+// Validate required environment variables before starting
+const requiredEnvVars = ['MONGODB_URI', 'JWT_SECRET', 'PORT'];
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+    console.error(`❌ Missing required environment variables: ${missingVars.join(', ')}`.red.bold);
+    process.exit(1);
+}
+
+// Validate JWT_SECRET strength
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
+    console.warn('⚠️  JWT_SECRET should be at least 32 characters for security'.yellow);
+}
 
 // Connect to Database
 connectDB();
@@ -58,8 +74,13 @@ app.set('trust proxy', 1);
 
 // Security middleware
 app.use(securityHeaders);
-// app.use(sanitizeData); // Temporarily disabled - Express 5 compatibility issue
-// app.use(sanitizeInput); // Temporarily disabled - Express 5 compatibility issue
+
+// Input sanitization - protect against NoSQL injection and XSS
+// Using custom middleware compatible with Express 5
+const sanitizeMiddleware = require('./middleware/sanitizeMiddleware');
+app.use(sanitizeMiddleware);
+
+// Parameter pollution prevention (must come after sanitization)
 app.use(preventParameterPollution);
 
 // CORS
@@ -72,10 +93,17 @@ if (process.env.NODE_ENV === 'development') {
     app.use(morgan('combined')); // Standard Apache combined log for production
 }
 
-// Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Body parsing with endpoint-specific limits
+app.use(express.json({ limit: '100kb' })); // Default smaller limit
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 app.use(cookieParser());
+
+// Request timeout middleware
+app.use((req, res, next) => {
+    req.setTimeout(30000); // 30 seconds
+    res.setTimeout(30000);
+    next();
+});
 
 // Request ID and logging
 app.use(addRequestId);
@@ -89,10 +117,14 @@ if (process.env.NODE_ENV === 'production') {
 // Rate limiting
 app.use(generalLimiter);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.status(200).json({
-        status: 'OK',
+// Health check endpoint with DB connection check
+app.get('/health', async (req, res) => {
+    const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+    const isHealthy = dbStatus === 'connected';
+    
+    res.status(isHealthy ? 200 : 503).json({
+        status: isHealthy ? 'OK' : 'UNHEALTHY',
+        database: dbStatus,
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         environment: process.env.NODE_ENV,
@@ -122,18 +154,19 @@ app.use('/v1/api/auth', authLimiter, googleAuthRoutes);
 console.log('✅ Google auth routes mounted at /v1/api/auth'.green);
 app.use('/v1/api/products', cacheMiddleware(300), productRoutes); // 5 min cache
 app.use('/v1/api/categories', cacheMiddleware(600), categoryRoutes); // 10 min cache
-app.use('/v1/api/cart', cartRoutes);
-app.use('/v1/api/orders', orderRoutes);
+app.use('/v1/api/cart', cartLimiter, cartRoutes);
+app.use('/v1/api/orders', orderLimiter, orderRoutes);
 app.use('/v1/api/coupons', cacheMiddleware(300), couponRoutes); // 5 min cache
 app.use('/v1/api/payments', paymentLimiter, paymentRoutes);
 app.use('/v1/api/invoices', invoiceRoutes);
 app.use('/v1/api/search', cacheMiddleware(300), searchRoutes); // 5 min cache
 app.use('/v1/api/analytics', analyticsRoutes);
 app.use('/v1/api/notifications', notificationRoutes);
-app.use('/v1/api/upload', uploadRoutes);
+app.use('/v1/api/upload', uploadLimiter, uploadRoutes);
 app.use('/v1/api/files', fileManagementRoutes);
 app.use('/v1/api/popups', cacheMiddleware(300), popUpRoutes); // 5 min cache
 app.use('/v1/api/contacts', contactRoutes);
+app.use('/v1/api/hero-images', cacheMiddleware(300), heroImageRoutes); // 5 min cache
 console.log('✅ All routes mounted successfully'.green);
 
 // Error Handling Middleware

@@ -73,6 +73,11 @@ const productSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Category'
         },
+        categories: {
+            type: [mongoose.Schema.Types.ObjectId],
+            ref: 'Category',
+            default: []
+        },
         images: {
             type: [String],
             default: []
@@ -223,6 +228,14 @@ const productSchema = new mongoose.Schema(
     },
     { timestamps: true }
 );
+
+// Add indexes for better query performance
+productSchema.index({ name: 'text', description: 'text' }); // Text search
+productSchema.index({ isActive: 1, createdAt: -1 }); // Active products by date
+productSchema.index({ categories: 1 }); // Category filtering
+productSchema.index({ price: 1 }); // Price sorting
+productSchema.index({ stock: 1 }); // Stock filtering
+productSchema.index({ slug: 1 }); // Already indexed but explicit
 
 productSchema.pre('save', async function generateSlug(next) {
     if (this.isModified('name') || !this.slug) {
