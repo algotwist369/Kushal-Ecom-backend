@@ -184,7 +184,7 @@ const getAllProductsByFilter = handleAsync(async (req, res) => {
         pages: Math.ceil(total / limit),
         chunkSize,
         chunks,
-        products  
+        products
     });
 });
 
@@ -217,12 +217,12 @@ const createProduct = handleAsync(async (req, res) => {
     // Validate categories - support both single category (backward compatibility) and categories array
     let validatedCategories = [];
     const Category = require('../models/Category');
-    
+
     // Handle categories array (new way)
     if (categories && Array.isArray(categories) && categories.length > 0) {
         // Remove duplicates and empty values
         const uniqueCategories = [...new Set(categories.filter(cat => cat && cat.trim() !== ''))];
-        
+
         // Validate each category ID
         for (const catId of uniqueCategories) {
             if (!validateObjectId(catId)) {
@@ -246,7 +246,7 @@ const createProduct = handleAsync(async (req, res) => {
         }
         validatedCategories = [category];
     }
-    
+
     // At least one category is required
     if (validatedCategories.length === 0) {
         return res.status(400).json({ message: 'At least one category is required' });
@@ -268,6 +268,43 @@ const createProduct = handleAsync(async (req, res) => {
         const stockNum = Number(stock);
         if (isNaN(stockNum) || stockNum < 0) {
             return res.status(400).json({ message: 'Invalid stock quantity' });
+        }
+    }
+
+    // Validate packOptions if provided
+    if (packOptions && Array.isArray(packOptions)) {
+        for (let i = 0; i < packOptions.length; i++) {
+            const pack = packOptions[i];
+            if (!pack || typeof pack !== 'object') {
+                return res.status(400).json({ message: `Invalid pack option at index ${i}` });
+            }
+
+            // Both packSize and packPrice must be provided together
+            const hasPackSize = pack.packSize !== undefined && pack.packSize !== null && pack.packSize !== '';
+            const hasPackPrice = pack.packPrice !== undefined && pack.packPrice !== null && pack.packPrice !== '';
+
+            if (hasPackSize || hasPackPrice) {
+                if (!hasPackSize || !hasPackPrice) {
+                    return res.status(400).json({ message: `Pack option at index ${i}: Both packSize and packPrice are required together` });
+                }
+
+                const packSizeNum = Number(pack.packSize);
+                if (isNaN(packSizeNum) || packSizeNum < 1) {
+                    return res.status(400).json({ message: `Invalid pack size at index ${i}: must be a positive number` });
+                }
+
+                const packPriceNum = Number(pack.packPrice);
+                if (isNaN(packPriceNum) || packPriceNum < 0) {
+                    return res.status(400).json({ message: `Invalid pack price at index ${i}: must be a non-negative number` });
+                }
+            }
+
+            // Validate image if provided
+            if (pack.image !== undefined && pack.image !== null && pack.image !== '') {
+                if (typeof pack.image !== 'string') {
+                    return res.status(400).json({ message: `Invalid image URL at index ${i}` });
+                }
+            }
         }
     }
 
@@ -438,13 +475,13 @@ const getAllProductsAdmin = handleAsync(async (req, res) => {
     // Validate and sanitize pagination parameters
     page = Number(page) || 1;
     limit = Number(limit) || 10;
-    
+
     // Ensure page and limit are positive integers
     if (isNaN(page) || page < 1) page = 1;
     if (isNaN(limit) || limit < 1) limit = 10;
     // Cap limit to prevent excessive data retrieval
     if (limit > 100) limit = 100;
-    
+
     const skip = (page - 1) * limit;
 
     let filter = {};
@@ -507,7 +544,7 @@ const getAllProductsAdmin = handleAsync(async (req, res) => {
     let sort = {};
     const validSortOptions = ['name', 'nameDesc', 'priceAsc', 'priceDesc', 'stock', 'stockDesc', 'rating', 'oldest', 'newest'];
     const sortOption = sortBy && validSortOptions.includes(sortBy) ? sortBy : 'newest';
-    
+
     switch (sortOption) {
         case 'name':
             sort.name = 1;
@@ -608,7 +645,7 @@ const updateProduct = handleAsync(async (req, res) => {
             headers: req.headers,
             method: req.method
         });
-        return res.status(400).json({ 
+        return res.status(400).json({
             message: 'Request body is required and must be an object',
             received: req.body ? 'Body exists but invalid type' : 'Body is missing'
         });
@@ -639,7 +676,7 @@ const updateProduct = handleAsync(async (req, res) => {
         if (isNaN(discountPriceNum) || discountPriceNum < 0) {
             return res.status(400).json({ message: 'Invalid discount price' });
         }
-        
+
         // Determine the current price (updated or existing)
         let currentPrice;
         if (updateData.price !== undefined && updateData.price !== null) {
@@ -651,12 +688,12 @@ const updateProduct = handleAsync(async (req, res) => {
         } else {
             currentPrice = product.price || 0;
         }
-        
+
         // Price must be greater than 0 to have a discount
         if (currentPrice <= 0) {
             return res.status(400).json({ message: 'Product price must be greater than 0 before setting discount price' });
         }
-        
+
         // Discount price must be less than regular price
         if (discountPriceNum >= currentPrice) {
             return res.status(400).json({ message: 'Discount price must be less than regular price' });
@@ -666,7 +703,7 @@ const updateProduct = handleAsync(async (req, res) => {
     // Validate and prepare categories - support both single category (backward compatibility) and categories array
     let validatedCategories = undefined;
     const Category = require('../models/Category');
-    
+
     // Handle categories array (new way) - takes precedence over single category
     if (updateData.categories !== undefined) {
         if (Array.isArray(updateData.categories)) {
@@ -685,11 +722,11 @@ const updateProduct = handleAsync(async (req, res) => {
                     // ObjectId or other types
                     return true;
                 }))];
-                
+
                 if (uniqueCategories.length === 0) {
                     return res.status(400).json({ message: 'At least one valid category is required' });
                 }
-                
+
                 // Validate each category ID
                 for (const catId of uniqueCategories) {
                     // Convert to string for validation if needed
@@ -800,27 +837,33 @@ const updateProduct = handleAsync(async (req, res) => {
                 if (!pack || typeof pack !== 'object') {
                     return res.status(400).json({ message: `Invalid pack option at index ${i}` });
                 }
-                
+
                 // Both packSize and packPrice must be provided together
                 const hasPackSize = pack.packSize !== undefined && pack.packSize !== null && pack.packSize !== '';
                 const hasPackPrice = pack.packPrice !== undefined && pack.packPrice !== null && pack.packPrice !== '';
-                
+
                 if (hasPackSize || hasPackPrice) {
                     // If one is provided, both must be provided
                     if (!hasPackSize || !hasPackPrice) {
                         return res.status(400).json({ message: `Pack option at index ${i}: Both packSize and packPrice are required together` });
                     }
-                    
+
                     // Validate packSize
                     const packSizeNum = Number(pack.packSize);
                     if (isNaN(packSizeNum) || packSizeNum < 1) {
                         return res.status(400).json({ message: `Invalid pack size at index ${i}: must be a positive number` });
                     }
-                    
-                    // Validate packPrice
+
                     const packPriceNum = Number(pack.packPrice);
                     if (isNaN(packPriceNum) || packPriceNum < 0) {
                         return res.status(400).json({ message: `Invalid pack price at index ${i}: must be a non-negative number` });
+                    }
+                }
+
+                // Validate image if provided
+                if (pack.image !== undefined && pack.image !== null && pack.image !== '') {
+                    if (typeof pack.image !== 'string') {
+                        return res.status(400).json({ message: `Invalid image URL at index ${i}` });
                     }
                 }
             }
@@ -837,23 +880,23 @@ const updateProduct = handleAsync(async (req, res) => {
                 if (!free || typeof free !== 'object') {
                     return res.status(400).json({ message: `Invalid free product at index ${i}` });
                 }
-                
+
                 if (!free.product) {
                     return res.status(400).json({ message: `Product ID is required in free products at index ${i}` });
                 }
-                
+
                 // Validate product ID format
                 const productIdStr = free.product.toString ? free.product.toString() : free.product;
                 if (!validateObjectId(productIdStr)) {
                     return res.status(400).json({ message: `Invalid product ID in free products at index ${i}` });
                 }
-                
+
                 // Check if product exists
                 const productExists = await Product.findById(productIdStr);
                 if (!productExists) {
                     return res.status(400).json({ message: `Product not found in free products at index ${i}: ${productIdStr}` });
                 }
-                
+
                 // Validate minQuantity
                 if (free.minQuantity !== undefined && free.minQuantity !== null && free.minQuantity !== '') {
                     const minQtyNum = Number(free.minQuantity);
@@ -861,7 +904,7 @@ const updateProduct = handleAsync(async (req, res) => {
                         return res.status(400).json({ message: `Invalid min quantity in free products at index ${i}: must be a positive number` });
                     }
                 }
-                
+
                 // Validate quantity
                 if (free.quantity !== undefined && free.quantity !== null && free.quantity !== '') {
                     const qtyNum = Number(free.quantity);
@@ -883,23 +926,23 @@ const updateProduct = handleAsync(async (req, res) => {
                 if (!bundle || typeof bundle !== 'object') {
                     return res.status(400).json({ message: `Invalid bundle at index ${i}` });
                 }
-                
+
                 if (!bundle.product) {
                     return res.status(400).json({ message: `Product ID is required in bundle with at index ${i}` });
                 }
-                
+
                 // Validate product ID format
                 const productIdStr = bundle.product.toString ? bundle.product.toString() : bundle.product;
                 if (!validateObjectId(productIdStr)) {
                     return res.status(400).json({ message: `Invalid product ID in bundle with at index ${i}` });
                 }
-                
+
                 // Check if product exists
                 const productExists = await Product.findById(productIdStr);
                 if (!productExists) {
                     return res.status(400).json({ message: `Product not found in bundle with at index ${i}: ${productIdStr}` });
                 }
-                
+
                 // Validate bundlePrice
                 if (bundle.bundlePrice !== undefined && bundle.bundlePrice !== null && bundle.bundlePrice !== '') {
                     const bundlePriceNum = Number(bundle.bundlePrice);
@@ -939,7 +982,7 @@ const updateProduct = handleAsync(async (req, res) => {
         const oldImages = Array.isArray(product.images) ? product.images : [];
         const newImages = updateData.images.filter(img => img && typeof img === 'string' && img.trim() !== '');
         const removedImages = oldImages.filter(img => img && !newImages.includes(img));
-        
+
         // Delete removed images (async, don't block update)
         if (removedImages.length > 0) {
             removedImages.forEach(imageUrl => {
@@ -961,22 +1004,22 @@ const updateProduct = handleAsync(async (req, res) => {
     }
 
     const updatedProduct = await product.save();
-    
+
     // Reload product to ensure we have the latest data from database
     const reloadedProduct = await Product.findById(updatedProduct._id);
-    
+
     // Populate categories for response
     await reloadedProduct.populate('category', 'name');
     await reloadedProduct.populate('categories', 'name');
-    
+
     console.log('✅ Product updated successfully:', reloadedProduct._id, reloadedProduct.name);
-    
+
     // Emit real-time product update event via Socket.IO
     if (global.io) {
         global.io.emit('product_updated', reloadedProduct);
         console.log('🔔 Real-time product update event sent:', reloadedProduct._id);
     }
-    
+
     res.json(reloadedProduct);
 });
 
@@ -995,10 +1038,10 @@ const deleteProduct = handleAsync(async (req, res) => {
 
     if (ordersWithProduct > 0) {
         // Option 1: Prevent deletion (recommended for production)
-        return res.status(400).json({ 
+        return res.status(400).json({
             message: `Cannot delete product. It is associated with ${ordersWithProduct} active order(s). Consider marking it as inactive instead.`
         });
-        
+
         // Option 2: Allow deletion but log warning (uncomment if you want to allow)
         // console.warn(`⚠️ Deleting product ${product.name} that is in ${ordersWithProduct} order(s)`);
     }
@@ -1037,15 +1080,15 @@ const deleteProduct = handleAsync(async (req, res) => {
 
     // Delete the product
     await Product.findByIdAndDelete(req.params.id);
-    
+
     console.log('✅ Product deleted successfully:', product.name);
-    
+
     // Emit real-time product deletion event via Socket.IO
     if (global.io) {
         global.io.emit('product_deleted', { productId: req.params.id, productName: product.name });
         console.log('🔔 Real-time product deletion event sent:', req.params.id);
     }
-    
+
     res.json({ message: 'Product removed successfully' });
 });
 
