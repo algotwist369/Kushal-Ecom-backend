@@ -24,11 +24,11 @@ const googleAuth = handleAsync(async (req, res) => {
         if (user) {
             // Check if account is active
             if (!user.isActive) {
-                return res.status(401).json({ 
-                    message: 'Account is inactive or no longer exists' 
+                return res.status(401).json({
+                    message: 'Account is inactive or no longer exists'
                 });
             }
-            
+
             // User exists - login
             // Update Google ID if not set
             if (!user.googleId) {
@@ -42,7 +42,8 @@ const googleAuth = handleAsync(async (req, res) => {
                 email: googleUser.email,
                 googleId: googleUser.googleId,
                 // Generate a random password for OAuth users
-                password: Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8),
+                // Generate a random password that meets validation requirements (Uppercase, Lowercase, Number, 8+ chars)
+                password: Math.random().toString(36).slice(-8) + 'Aa1' + Math.random().toString(36).slice(-8).toUpperCase(),
                 isActive: true,
             });
         }
@@ -60,7 +61,7 @@ const googleAuth = handleAsync(async (req, res) => {
 
     } catch (error) {
         console.error('Google auth error:', error);
-        res.status(401).json({ 
+        res.status(401).json({
             message: error.message || 'Google authentication failed',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
