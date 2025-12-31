@@ -11,6 +11,7 @@ const {
     getUserById,
     updateUser
 } = require('../controllers/authController');
+const { sendOtp, verifyOtp } = require('../controllers/otpController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -18,6 +19,8 @@ const router = express.Router();
 // Public auth routes
 router.post('/register', registerUser);
 router.post('/login', loginUser);
+router.post('/send-otp', sendOtp);
+router.post('/verify-otp', verifyOtp);
 
 // Authenticated routes
 router.get('/profile', protect, getUserProfile);
