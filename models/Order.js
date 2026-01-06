@@ -123,6 +123,7 @@ const orderSchema = new mongoose.Schema(
         },
         shippingAddress: shippingAddressSchema,
         notes: String,
+        razorpayOrderId: String,
         razorpayPaymentId: String,
         invoiceUrl: String,
         invoicePath: String,

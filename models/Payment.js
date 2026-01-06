@@ -22,6 +22,12 @@ const paymentSchema = new mongoose.Schema(
             required: true,
             min: 0
         },
+        currency: {
+            type: String,
+            default: 'INR'
+        },
+        method: String, // e.g. card, upi, netbanking (from Razorpay payload)
+        razorpayOrderId: String,
         transactionId: String,
         metadata: {
             type: Map,
